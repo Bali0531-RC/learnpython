@@ -1,26 +1,177 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f1e5d0;
+  --foreground: #1f1b16;
+  --surface: rgba(255, 249, 242, 0.78);
+  --surface-strong: rgba(255, 252, 247, 0.92);
+  --surface-soft: rgba(255, 255, 255, 0.72);
+  --background-soft: rgba(241, 229, 208, 0.78);
+  --muted: #6d6358;
+  --accent: #cd6a2d;
+  --accent-alt: #215f73;
+  --line: rgba(31, 27, 22, 0.12);
+  --page-background:
+    radial-gradient(circle at top left, rgba(205, 106, 45, 0.18), transparent 30%),
+    radial-gradient(circle at top right, rgba(33, 95, 115, 0.16), transparent 28%),
+    linear-gradient(180deg, #f8efe1 0%, #f1e5d0 38%, #ece1cf 100%);
+  --selection: rgba(205, 106, 45, 0.22);
+  color-scheme: light;
+}
+
+.dark {
+  --background: #14181d;
+  --foreground: #f3eadf;
+  --surface: rgba(20, 24, 29, 0.82);
+  --surface-strong: rgba(15, 18, 23, 0.94);
+  --surface-soft: rgba(29, 35, 42, 0.76);
+  --background-soft: rgba(37, 44, 53, 0.72);
+  --muted: #baaea2;
+  --accent: #ff8f47;
+  --accent-alt: #8ad9eb;
+  --line: rgba(243, 234, 223, 0.12);
+  --page-background:
+    radial-gradient(circle at top left, rgba(255, 143, 71, 0.18), transparent 30%),
+    radial-gradient(circle at top right, rgba(138, 217, 235, 0.16), transparent 28%),
+    linear-gradient(180deg, #111419 0%, #171c22 36%, #12171c 100%);
+  --selection: rgba(255, 143, 71, 0.3);
+  color-scheme: dark;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-space-grotesk);
+  --font-mono: var(--font-ibm-plex-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
+  min-height: 100vh;
+  background: var(--page-background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-space-grotesk), sans-serif;
+  transition: background 180ms ease, color 180ms ease;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+.page-shell {
+  min-height: 100vh;
+}
+
+.section-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 60px rgba(62, 43, 18, 0.08);
+  border-radius: 2rem;
+}
+
+.dark .section-card {
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.26);
+}
+
+.grid-lines {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--foreground) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--foreground) 7%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  padding: 0.5rem 0.9rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.eyebrow {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--accent-alt);
+}
+
+.primary-link,
+.secondary-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.95rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  transition: transform 180ms ease, background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.primary-link {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.secondary-link {
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.primary-link:hover,
+.secondary-link:hover {
+  transform: translateY(-1px);
+}
+
+.primary-link:hover {
+  background: color-mix(in srgb, var(--foreground) 88%, var(--accent) 12%);
+}
+
+.secondary-link:hover {
+  border-color: color-mix(in srgb, var(--foreground) 22%, transparent);
+  background: var(--surface-strong);
+}
+
+.theme-toggle {
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--foreground);
+}
+
+.theme-toggle:hover {
+  background: var(--surface-strong);
+}
+
+.surface-soft {
+  background: var(--surface-soft);
+}
+
+.background-soft {
+  background: var(--background-soft);
+}
+
+@media (max-width: 640px) {
+  .section-card {
+    border-radius: 1.5rem;
+  }
 }

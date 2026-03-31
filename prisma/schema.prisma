@@ -1,0 +1,237 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LearningTrack {
+  kozep
+  emelt
+}
+
+enum ResourceLinkKind {
+  practice
+  archive
+}
+
+enum TaskSourceKind {
+  platform_authored
+  official_archive
+}
+
+enum TaskInputMode {
+  stdin
+  provided_files
+}
+
+enum TestSuite {
+  public
+  hidden
+}
+
+enum SubmissionMode {
+  run
+  submit
+}
+
+enum OutputVisibility {
+  full
+  masked
+}
+
+enum LessonMasteryStatus {
+  uj
+  erintett
+  gyakorolt
+  ujraerositendo
+  stabil
+}
+
+model UserProfile {
+  id             String          @id @default(cuid())
+  handle         String          @unique
+  displayName    String
+  preferredTrack LearningTrack?
+  bio            String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  lessonProgress LessonProgress[]
+  submissions    Submission[]
+}
+
+model Lesson {
+  id               String               @id
+  phaseSlug        String
+  phaseTitle       String
+  phaseAudience    String
+  phaseDescription String
+  phaseOrder       Int
+  orderInPhase     Int
+  title            String
+  summary          String
+  examValue        String
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  resourceLinks    LessonResourceLink[]
+  progress         LessonProgress[]
+}
+
+model LessonResourceLink {
+  id        String           @id @default(cuid())
+  lessonId  String
+  kind      ResourceLinkKind
+  targetId  String
+  href      String
+  title     String
+  badge     String
+  meta      String
+  reason    String
+  position  Int
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  lesson    Lesson           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonId, targetId])
+  @@index([targetId])
+}
+
+model Task {
+  id               String             @id
+  title            String
+  track            LearningTrack
+  level            String
+  family           String
+  inputMode        TaskInputMode
+  estimatedMinutes String
+  summary          String
+  skillFocus       Json
+  editorTips       Json
+  sourceKind       TaskSourceKind
+  sourceLabel      String
+  sourceNote       String
+  statement        Json
+  inputFormat      Json
+  outputFormat     Json
+  workspaceRules   Json
+  starterCode      String             @db.Text
+  routePath        String             @unique
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  tests            TaskTestCase[]
+  files            TaskProvidedFile[]
+  submissions      Submission[]
+  archiveEntry     ArchiveEntry?
+}
+
+model TaskTestCase {
+  id             String    @id @default(cuid())
+  taskId         String
+  suite          TestSuite
+  position       Int
+  label          String
+  input          String    @db.Text
+  expectedOutput String    @db.Text
+  explanation    String    @db.Text
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  task           Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, suite, position])
+}
+
+model TaskProvidedFile {
+  id          String    @id @default(cuid())
+  taskId      String
+  position    Int
+  path        String
+  description String    @db.Text
+  content     String    @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, path])
+}
+
+model ArchiveEntry {
+  id              String   @id
+  year            Int
+  season          String
+  level           String
+  title           String
+  family          String
+  note            String   @db.Text
+  source          String
+  fileHighlights  Json?
+  assets          Json?
+  workspaceTaskId String?  @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  workspaceTask   Task?    @relation(fields: [workspaceTaskId], references: [id], onDelete: SetNull)
+}
+
+model Submission {
+  id               String           @id @default(cuid())
+  userProfileId    String?
+  taskId           String
+  mode             SubmissionMode
+  suite            TestSuite
+  outputVisibility OutputVisibility
+  score            Float
+  passed           Int
+  total            Int
+  blocked          Boolean          @default(false)
+  blockReason      String?
+  resourceExceeded Boolean          @default(false)
+  resourceMessage  String?
+  terminatedEarly  Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  userProfile      UserProfile?     @relation(fields: [userProfileId], references: [id], onDelete: SetNull)
+  task             Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  results          SubmissionResult[]
+
+  @@index([taskId, createdAt])
+  @@index([userProfileId, createdAt])
+}
+
+model SubmissionResult {
+  id               String     @id @default(cuid())
+  submissionId     String
+  position         Int
+  label            String
+  passed           Boolean
+  expectedOutput   String     @db.Text
+  actualOutput     String     @db.Text
+  stderr           String     @db.Text
+  exitCode         Int
+  timedOut         Boolean
+  resourceExceeded Boolean    @default(false)
+  resourceMessage  String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  submission       Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, position])
+}
+
+model LessonProgress {
+  id              String             @id @default(cuid())
+  userProfileId   String
+  lessonId        String
+  status          LessonMasteryStatus
+  lastActivityAt  DateTime?
+  bestSubmitScore Float?
+  draftCount      Int                @default(0)
+  runCount        Int                @default(0)
+  submitCount     Int                @default(0)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  userProfile     UserProfile        @relation(fields: [userProfileId], references: [id], onDelete: Cascade)
+  lesson          Lesson             @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userProfileId, lessonId])
+}

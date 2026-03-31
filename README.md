@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Kódérettségi
 
-## Getting Started
+Magyar nyelvű, dockerizált felkészítő platform a digitális kultúra érettségi Python programozási részéhez. A cél egy olyan tanulási rendszer, amely 0 tudástól indulva készít fel közép- és emelt szinten, saját feladatbankkal, vizsgaarchívummal, későbbi determinisztikus javítással és AI-alapú visszajelzéssel.
 
-First, run the development server:
+## Jelenlegi állapot
+
+- Next.js App Router alapoldalak magyar nyelvű kezdőlappal és külön szekciókkal
+- részletes lesson map v1 strukturált adatmodellben
+- első interaktív gyakorlófeladatok beépített task workspace-szel és oldalsó kódszerkesztővel
+- vizsgaarchívum szemléleti alapok a korábbi évek feladattípusaihoz
+- Docker Compose alap a web, judge, PostgreSQL és Redis szolgáltatásokhoz
+- külön Python judge service szigorított vizsgamódú AST-ellenőrzéssel és processzlimitekkel
+- a judge konténer hard capje 1 CPU-mag, 2 GB RAM és 5 GB írható sandbox-terület, túllépéskor a futás megszakad és a felület visszajelzi az okot
+- valódi light és dark mode váltó a felületen
+
+## Technológiai irány
+
+- Web: Next.js 16, TypeScript, App Router, Tailwind CSS 4
+- Infrastruktúra a lokális fejlesztéshez: Docker Compose
+- Adatbázis: PostgreSQL
+- ORM és seedelt tartalomréteg: Prisma
+- Queue és cache alap: Redis
+- Kódfuttatás és deterministic grading: Python FastAPI judge service
+
+## Lokális futtatás Dockerrel
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env
+npm run docker:up
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Ez elindítja a következő szolgáltatásokat:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `web` a Next.js alkalmazáshoz a `http://localhost:3000` címen
+- `judge` a Python értékelőszolgáltatáshoz a `http://localhost:8001` címen
+- `db` PostgreSQL a `5432` porton
+- `redis` a `6379` porton
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Judge erőforráskorlátok
 
-## Learn More
+A judge szolgáltatás konténer- és runner-szinten is védett:
 
-To learn more about Next.js, take a look at the following resources:
+- a Docker Compose limit 1 CPU-mag és 2 GB memória fölé nem engedi a szolgáltatást
+- a sandbox írási területe 5 GB-ra van korlátozva
+- ha egy futtatás időben, memóriában vagy tárhelyhasználatban túllépi a keretet, a judge megszakítja a végrehajtást és magyar nyelvű értesítést küld vissza a felületnek
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Leállítás:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run docker:down
+```
 
-## Deploy on Vercel
+## Lokális futtatás Docker nélkül
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm install
+npm run dev
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+A webes felület külön is elindul, de az interaktív futtatás és beküldés csak akkor működik, ha a judge service is fut. Ehhez a legegyszerűbb a dockeres judge használata, vagy a `JUDGE_API_URL` beállítása egy elérhető judge példányra.
+
+## Ellenőrzés
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```
+
+## Adatbázis-alapozás
+
+Ez az a kör, ahol a database, profiles, lessons és tests szerveroldali implementációja ténylegesen elkezdődik:
+
+- Prisma séma készült a profilokhoz, leckékhez, lesson-resource linkekhez, interaktív taskokhoz, publikus és rejtett tesztekhez, archive bejegyzésekhez és submission rekordokhoz
+- a jelenlegi statikus lesson/task/archive registry seedelhető PostgreSQL tartalomként is
+- a health endpoint már vissza tudja jelezni, hogy az adatbázis elérhető-e, és mennyi seeded tartalom van benne
+
+Első lokális bootstrap:
+
+```bash
+npm run db:generate
+npm run db:push
+npm run db:seed
+```
+
+Hasznos további parancsok:
+
+```bash
+npm run db:migrate
+npm run db:studio
+```
+
+## Következő nagyobb implementációs lépések
+
+1. A lesson, practice és archive oldalak első olvasási útvonalának Prisma-alapú lekérdezésekre váltása.
+2. Profilok, auth és submission persistence bekötése a most létrehozott sémára.
+3. A pontozott beküldés szerveroldali mentése submission és submission-result rekordokba.
+4. Lesson-progress számolás szerveroldalon, nem csak localStorage-ból.
+5. Későbbi AI feedback adapter bevezetése a submission pipeline mellé.

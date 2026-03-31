@@ -1,0 +1,71 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run dev -- --hostname 0.0.0.0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      judge:
+        condition: service_started
+    environment:
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      JUDGE_API_URL: ${JUDGE_API_URL:-http://judge:8000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/erettsegi}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  judge:
+    build:
+      context: ./services/judge
+      dockerfile: Dockerfile
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    cpus: 1.0
+    mem_limit: 2g
+    memswap_limit: 2g
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - ./services/judge:/app:ro
+    storage_opt:
+      size: "5G"
+    read_only: true
+    tmpfs:
+      - /tmp:size=5368709120,exec,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    user: "65534:65534"
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: erettsegi
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d erettsegi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres-data:
