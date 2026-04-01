@@ -1,3 +1,5 @@
+import { officialProgrammingArchiveSeeds, type OfficialProgrammingArchiveSeed } from "@/lib/official-programming-archive-data";
+
 export type NavigationItem = {
   href: string;
   label: string;
@@ -59,6 +61,13 @@ export type Milestone = {
   title: string;
   stage: string;
   description: string;
+};
+
+export type ProgressRoadmapItem = {
+  title: string;
+  stage: string;
+  summary: string;
+  unlocks: string;
 };
 
 export const navigationItems: NavigationItem[] = [
@@ -743,108 +752,78 @@ export const practiceBlueprint: BlueprintCard[] = [
   },
 ];
 
-export const archiveEntries: ArchiveEntry[] = [
-  {
-    id: "2025-oktober-kozep-forgalomszamlalas",
-    year: 2025,
-    season: "október",
-    level: "Közép",
-    title: "Forgalomszámlálás",
-    family: "idősoros adatelemzés",
-    note: "Közép szintű gyűjtés, összesítés és outputfegyelem mintája.",
-    source: "https://farkascs.hu/digkult-kozep/",
-  },
-  {
-    id: "2025-majus-kozep-kihivas",
-    year: 2025,
-    season: "május",
-    level: "Közép",
-    title: "Kihívás",
-    family: "állapotfrissítés és egyszerű szimuláció",
-    note: "Arra jó példa, hogyan lehet friss szövegezéssel ugyanazt a gondolkodási mintát tanítani.",
-    source: "https://farkascs.hu/digkult-kozep/",
-  },
-  {
-    id: "2024-oktober-kozep-befozes",
-    year: 2024,
-    season: "október",
-    level: "Közép",
-    title: "Befőzés",
-    family: "feldolgozás és szabályalkalmazás",
-    note: "Klasszikus közép minták: parsing, ciklus, feltétel, végső kiírás.",
-    source: "https://farkascs.hu/digkult-kozep/",
-  },
-  {
-    id: "2023-oktober-kozep-szallitas",
-    year: 2023,
-    season: "október",
-    level: "Közép",
-    title: "Szállítás",
-    family: "állapotkezelés és összesítés",
-    note: "Átmenet a közép nehezebb rutinjaihoz.",
-    source: "https://farkascs.hu/digkult-kozep/",
-  },
-  {
-    id: "2025-oktober-emelt-sebesseg",
-    year: 2025,
-    season: "október",
-    level: "Emelt",
-    title: "Sebesség",
-    family: "mozgásszimuláció és számítás",
-    note:
-      "Koordináta, állapot és következetes szabálykezelés emelten. A workspace-be helyben letöltöttük a PDF-et, a ZIP-et és a kicsomagolt ut.txt mintafájlt is.",
-    source: "https://farkascs.hu/digkult-emelt/",
-    workspaceTaskId: "2025-oktober-emelt-sebesseg",
-    fileHighlights: [
-      "A hivatalos ZIP csomag a 3_Sebesseg/ut.txt adatfájlt tartalmazza.",
-      "A PDF-ből megerősíthető, hogy ez a feladat valódi fájlos beolvasást igényel.",
-    ],
-    assets: [
-      {
-        label: "Helyi PDF",
-        href: "/archive/2025-oktober-emelt/sebesseg/25oed_Sebesseg.pdf",
-      },
-      {
-        label: "Helyi ZIP",
-        href: "/archive/2025-oktober-emelt/sebesseg/25oed_Sebesseg.zip",
-      },
-      {
-        label: "Kicsomagolt ut.txt",
-        href: "/archive/2025-oktober-emelt/sebesseg/3_Sebesseg/ut.txt",
-      },
-    ],
-  },
-  {
-    id: "2025-majus-idegen-emelt-ascii-rajzok",
-    year: 2025,
-    season: "május idegen",
-    level: "Emelt",
-    title: "ASCII rajzok",
-    family: "szigorúan formázott output",
-    note: "A platform saját feladataiban ezt teljesen új vizuális történetekkel érdemes újraépíteni.",
-    source: "https://farkascs.hu/digkult-emelt/",
-  },
-  {
-    id: "2024-majus-emelt-belepteto-rendszer",
-    year: 2024,
-    season: "május",
-    level: "Emelt",
-    title: "Beléptető rendszer",
-    family: "szabályrendszer és állapotkezelés",
-    note: "Többlépcsős logika és feldolgozási fegyelem emeltre jellemző példája.",
-    source: "https://farkascs.hu/digkult-emelt/",
-  },
-  {
-    id: "2023-majus-emelt-utemezes",
-    year: 2023,
-    season: "május",
-    level: "Emelt",
-    title: "Ütemezés",
-    family: "sorrendkezelés és kiosztási logika",
-    note: "A lecketérkép emelt ütemezési blokkjanak fontos alapmintája.",
-    source: "https://farkascs.hu/digkult-emelt/",
-  },
-];
+const archiveSourcePageByLevel: Record<ArchiveEntry["level"], string> = {
+  "Közép": "https://farkascs.hu/digkult-kozep/",
+  "Emelt": "https://farkascs.hu/digkult-emelt/",
+};
+
+function buildDefaultArchiveNote(seed: OfficialProgrammingArchiveSeed) {
+  const level = seed.level.toLowerCase();
+
+  if (seed.season === "minta") {
+    return `A digitális kultúra ${seed.year}. minta ${level} programozási feladata közvetlen PDF- és ZIP-hivatkozásokkal az eredeti forrásoldal alapján.`;
+  }
+
+  if (seed.season.includes("idegen")) {
+    return `A hivatalos ${seed.year}. ${seed.season} ${level} programozási feladata közvetlen PDF- és ZIP-hivatkozásokkal az idegen nyelvű vizsgaváltozatból.`;
+  }
+
+  return `A hivatalos ${seed.year}. ${seed.season} ${level} programozási feladata közvetlen PDF- és ZIP-hivatkozásokkal az eredeti archív forrásoldalról.`;
+}
+
+function buildOfficialArchiveAssets(seed: OfficialProgrammingArchiveSeed) {
+  const assets: ArchiveAsset[] = [...(seed.additionalAssets ?? [])];
+
+  assets.push({
+    label: "Programleírás (PDF)",
+    href: seed.programPdfHref,
+  });
+
+  if (seed.programZipHref) {
+    assets.push({
+      label: "Program forráscsomag (ZIP)",
+      href: seed.programZipHref,
+    });
+  }
+
+  if (seed.taskSheetPdfHref) {
+    assets.push({
+      label: "Teljes feladatlap (PDF)",
+      href: seed.taskSheetPdfHref,
+    });
+  }
+
+  if (seed.solutionZipHref) {
+    assets.push({
+      label: "Hivatalos megoldáscsomag (ZIP)",
+      href: seed.solutionZipHref,
+    });
+  }
+
+  return assets.filter((asset, index, collection) =>
+    collection.findIndex((candidate) => candidate.href === asset.href) === index,
+  );
+}
+
+function toOfficialArchiveEntry(seed: OfficialProgrammingArchiveSeed): ArchiveEntry {
+  return {
+    id: seed.id,
+    year: seed.year,
+    season: seed.season,
+    level: seed.level,
+    title: seed.title,
+    family: seed.family ?? "hivatalos programozási archív referencia",
+    note: seed.note ?? buildDefaultArchiveNote(seed),
+    source: archiveSourcePageByLevel[seed.level],
+    workspaceTaskId: seed.workspaceTaskId,
+    fileHighlights: seed.fileHighlights,
+    assets: buildOfficialArchiveAssets(seed),
+  };
+}
+
+export const archiveEntries: ArchiveEntry[] = officialProgrammingArchiveSeeds.map(
+  toOfficialArchiveEntry,
+);
 
 export function getArchiveEntryById(entryId: string): ArchiveEntry | undefined {
   return archiveEntries.find((entry) => entry.id === entryId);
@@ -883,21 +862,33 @@ export const implementationMilestones: Milestone[] = [
   },
 ];
 
-export const progressRoadmap = [
+export const progressRoadmap: ProgressRoadmapItem[] = [
   {
     title: "Fiók és szintválasztás",
-    summary: "A diák a regisztráció után közép vagy emelt fókuszt választ, de vissza tud lépni a közös alapozásra.",
+    stage: "Következő kör",
+    summary: "A diák a regisztráció után közép vagy emelt fókuszt választ, de közben végig megmarad a közös alapozás visszalépési lehetősége.",
+    unlocks:
+      "A mostani böngészős snapshotból valódi, fiókhoz kötött tanulási profil lesz, amit több eszközről is ugyanott lehet folytatni.",
   },
   {
     title: "Mastery állapotok",
-    summary: "Minden skillhez látszani fog, hogy új, gyakorolt, stabil vagy újraerősítendő.",
+    stage: "Alfa",
+    summary: "Minden skillhez látszani fog, hogy új, gyakorolt, stabil vagy újraerősítendő, és ez visszahat a következő ajánlott lépésre is.",
+    unlocks:
+      "A lecketérkép nem csak tartalomjegyzék marad, hanem tényleges állapotjelző felületté válik a tanuló számára.",
   },
   {
     title: "Submission timeline",
-    summary: "A korábbi kódok, futások és hibaminták visszanézhetők lesznek feladatonként.",
+    stage: "Alfa",
+    summary: "A korábbi kódok, futások és hibaminták feladatonként és időrendben is visszanézhetők lesznek, nem csak az aktuális böngésző helyi tárolójából.",
+    unlocks:
+      "Megjelenhet a valódi fejlődési ív: mi javult, mi esik vissza, és melyik feladattípusnál torpan meg a tanuló.",
   },
   {
     title: "AI-ra kész feedback payload",
-    summary: "A submission adatszerkezetet úgy tervezzük, hogy később magyar nyelvű AI-értékelés is rálépjen.",
+    stage: "Beta",
+    summary: "A submission adatszerkezetet úgy tervezzük, hogy a deterministic judge eredményére ráépülhessen magyar nyelvű AI-értékelés és coaching.",
+    unlocks:
+      "A review nem különálló extra lesz, hanem a tényleges submission- és skillmodellre ráfűzött, ellenőrizhető kiegészítő réteg.",
   },
 ];
