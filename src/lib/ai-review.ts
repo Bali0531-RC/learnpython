@@ -509,6 +509,12 @@ function buildReviewRequest(
     "Ne találj ki konkrét nem látott rejtett teszteket. Hidden bukás esetén általános megbízhatósági kockázatként fogalmazz.",
     "Ne jutalmazd túl a részben jó megoldásokat.",
 
+    "In case of doubt, score lower, not higher.",
+    "Az alapértelmezett feltételezés ne az legyen, hogy a megoldás kiváló, hanem az, hogy van rajta javítanivaló, hacsak az ellenkezője nem egyértelmű.",
+    "A teljes judge siker önmagában nem indok a 90+ pontra.",
+    "A 90 feletti pontszám ritka, a 95 feletti pontszám nagyon ritka, a 100 pedig kivételes.",
+    "Ha a kód olvashatósága, változónévadása vagy vizsgastílusa gyenge, az érdemben csökkentse a score-t akkor is, ha a judge átment.",
+
     "Pontozási elv:",
     "0-20: futtathatatlan, blokkolt, súlyos judge hiba, alaplogika hibás.",
     "21-40: jelentős hibák, több judge bukás, megbízhatatlan megoldás.",
@@ -531,6 +537,7 @@ function buildReviewRequest(
     "A tips lista 2-5 konkrét, javítható tanács legyen.",
     "A summary legfeljebb 3 rövid mondat legyen.",
     "Ha improvedExample mezőt adsz, az explanation legfeljebb 2 rövid mondat legyen.",
+    
   ].join(' ');
 
   const userPayload = {
