@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 
 import type {
   AiReviewFinding,
+  AiReviewGlobalTokenQuota,
   AiReviewImprovedExample,
   AiReviewQuota,
   AiReviewResult,
@@ -11,6 +12,7 @@ import type {
   AiReviewVerdictInput,
 } from "@/lib/ai-review-types";
 import { AI_REVIEW_LIMIT } from "@/lib/ai-review-types";
+import { getRedisClient, isRedisConfigured } from "@/lib/redis";
 import type { WorkspaceTask } from "@/lib/task-types";
 
 const nodeRequire = createRequire(`${process.cwd()}/package.json`);
@@ -20,8 +22,34 @@ export const AI_REVIEW_COOKIE_NAME = "kodrettsegi-ai-review-count-v1";
 const DEFAULT_REVIEW_MODEL = "gpt-5-nano";
 const AI_REVIEW_REQUEST_TIMEOUT_MS = 18_000;
 const AI_REVIEW_MAX_COMPLETION_TOKENS = 900;
+const DEFAULT_AI_REVIEW_GLOBAL_TOKEN_LIMIT = 2_000_000;
+const DEFAULT_AI_REVIEW_GLOBAL_WINDOW_SECONDS = 60 * 60 * 24;
 const MAX_CODE_CHARS = 12_000;
 const MAX_TEXT_CHARS = 3_000;
+const AI_REVIEW_GLOBAL_TOKEN_USAGE_KEY = "kodrettsegi:ai-review:global-token-usage:v1";
+const AI_REVIEW_GLOBAL_RESERVE_SCRIPT = `
+local usage_key = KEYS[1]
+local token_limit = tonumber(ARGV[1])
+local reserve_tokens = tonumber(ARGV[2])
+local window_seconds = tonumber(ARGV[3])
+
+local current = tonumber(redis.call('GET', usage_key) or '0')
+
+if current + reserve_tokens > token_limit then
+  local ttl = redis.call('TTL', usage_key)
+  return {0, current, ttl}
+end
+
+local next_total = redis.call('INCRBY', usage_key, reserve_tokens)
+local ttl = redis.call('TTL', usage_key)
+
+if ttl < 0 then
+  redis.call('EXPIRE', usage_key, window_seconds)
+  ttl = window_seconds
+end
+
+return {1, next_total, ttl}
+`;
 const AI_REVIEW_RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -84,6 +112,32 @@ const AI_REVIEW_RESPONSE_SCHEMA = {
 } as const;
 
 type GeneratedAiReview = Omit<AiReviewResult, "createdAt" | "model" | "requestId" | "basedOn">;
+type OpenAIResponseUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+};
+type OpenAITextOptions = {
+  format?: {
+    type: "json_object";
+  } | {
+    type: "json_schema";
+    name: string;
+    schema: Record<string, unknown>;
+    strict?: boolean;
+  };
+  verbosity?: "low" | "medium" | "high";
+};
+type OpenAIReasoningOptions = {
+  effort: "minimal" | "low" | "medium" | "high";
+};
+type OpenAIBaseRequestOptions = {
+  model: string;
+  instructions: string;
+  input: string;
+  reasoning?: OpenAIReasoningOptions;
+  text?: OpenAITextOptions;
+};
 type OpenAIResponse = {
   id?: string;
   model: string;
@@ -101,29 +155,19 @@ type OpenAIResponse = {
   incomplete_details?: {
     reason?: string | null;
   } | null;
+  usage?: OpenAIResponseUsage;
   _request_id?: string | null;
+};
+type OpenAIInputTokenCountResponse = {
+  input_tokens: number;
 };
 type OpenAIClient = {
   responses: {
-    create(options: {
-      model: string;
-      instructions: string;
-      input: string;
+    inputTokens: {
+      count(options: OpenAIBaseRequestOptions): Promise<OpenAIInputTokenCountResponse>;
+    };
+    create(options: OpenAIBaseRequestOptions & {
       max_output_tokens?: number;
-      reasoning?: {
-        effort: "minimal" | "low" | "medium" | "high";
-      };
-      text?: {
-        format?: {
-          type: "json_object";
-        } | {
-          type: "json_schema";
-          name: string;
-          schema: Record<string, unknown>;
-          strict?: boolean;
-        };
-        verbosity?: "low" | "medium" | "high";
-      };
     }): Promise<OpenAIResponse>;
   };
 };
@@ -141,8 +185,44 @@ type OpenAIModule =
 
 let cachedOpenAIConstructor: OpenAIConstructor | null | undefined;
 
+type AiReviewQuotaError = Error & {
+  status: number;
+  globalTokenQuota?: AiReviewGlobalTokenQuota;
+};
+
+function readPositiveIntegerEnv(name: string, fallback: number) {
+  const rawValue = process.env[name]?.trim();
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const AI_REVIEW_GLOBAL_TOKEN_LIMIT = readPositiveIntegerEnv(
+  "AI_REVIEW_GLOBAL_TOKEN_LIMIT",
+  DEFAULT_AI_REVIEW_GLOBAL_TOKEN_LIMIT,
+);
+const AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS = readPositiveIntegerEnv(
+  "AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS",
+  DEFAULT_AI_REVIEW_GLOBAL_WINDOW_SECONDS,
+);
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+function toSafeNonNegativeInteger(value: unknown) {
+  const numericValue = typeof value === "number" ? value : Number.parseInt(String(value ?? "0"), 10);
+
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    return 0;
+  }
+
+  return Math.trunc(numericValue);
 }
 
 function truncateText(value: string, maxChars: number) {
@@ -242,6 +322,148 @@ function createOpenAIClient() {
 
 function getModelName() {
   return process.env.OPENAI_REVIEW_MODEL?.trim() || DEFAULT_REVIEW_MODEL;
+}
+
+function buildOpenAITextOptions(): OpenAITextOptions {
+  return {
+    format: {
+      type: "json_schema",
+      name: "ai_review_result",
+      schema: AI_REVIEW_RESPONSE_SCHEMA,
+      strict: true,
+    },
+    verbosity: "low",
+  };
+}
+
+function buildOpenAIReasoningOptions(): OpenAIReasoningOptions {
+  return {
+    effort: "minimal",
+  };
+}
+
+function buildOpenAIBaseRequestOptions(request: { instructions: string; input: string }): OpenAIBaseRequestOptions {
+  return {
+    model: getModelName(),
+    instructions: request.instructions,
+    input: request.input,
+    reasoning: buildOpenAIReasoningOptions(),
+    text: buildOpenAITextOptions(),
+  };
+}
+
+function getQuotaResetAt(ttlSeconds: number) {
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
+    return null;
+  }
+
+  return new Date(Date.now() + ttlSeconds * 1_000).toISOString();
+}
+
+function createAiReviewGlobalTokenQuota(usedCount: number, ttlSeconds = -2): AiReviewGlobalTokenQuota {
+  const used = clamp(toSafeNonNegativeInteger(usedCount), 0, AI_REVIEW_GLOBAL_TOKEN_LIMIT);
+
+  return {
+    limit: AI_REVIEW_GLOBAL_TOKEN_LIMIT,
+    used,
+    remaining: Math.max(AI_REVIEW_GLOBAL_TOKEN_LIMIT - used, 0),
+    windowSeconds: AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS,
+    resetAt: getQuotaResetAt(ttlSeconds),
+  };
+}
+
+function createAiReviewQuotaError(
+  message: string,
+  status: number,
+  globalTokenQuota?: AiReviewGlobalTokenQuota,
+): AiReviewQuotaError {
+  const error = new Error(message) as AiReviewQuotaError;
+
+  error.status = status;
+  error.globalTokenQuota = globalTokenQuota;
+
+  return error;
+}
+
+export function isAiReviewQuotaError(error: unknown): error is AiReviewQuotaError {
+  return error instanceof Error && typeof (error as AiReviewQuotaError).status === "number";
+}
+
+export function isAiReviewQuotaStoreConfigured() {
+  return isRedisConfigured();
+}
+
+async function requireRedisQuotaClient() {
+  const client = await getRedisClient();
+
+  if (!client) {
+    throw createAiReviewQuotaError(
+      "Az AI review globális tokenkeretéhez REDIS_URL szükséges.",
+      503,
+    );
+  }
+
+  return client;
+}
+
+async function adjustAiReviewGlobalTokenUsage(deltaTokens: number) {
+  const client = await requireRedisQuotaClient();
+  const nextUsed = await client.incrBy(AI_REVIEW_GLOBAL_TOKEN_USAGE_KEY, deltaTokens);
+  let ttlSeconds = await client.ttl(AI_REVIEW_GLOBAL_TOKEN_USAGE_KEY);
+
+  if (nextUsed > 0 && ttlSeconds < 0) {
+    await client.expire(AI_REVIEW_GLOBAL_TOKEN_USAGE_KEY, AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS);
+    ttlSeconds = AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS;
+  }
+
+  return createAiReviewGlobalTokenQuota(nextUsed, ttlSeconds);
+}
+
+async function reserveAiReviewGlobalTokens(reservedTokens: number) {
+  const client = await requireRedisQuotaClient();
+  const rawResult = await client.eval(AI_REVIEW_GLOBAL_RESERVE_SCRIPT, {
+    keys: [AI_REVIEW_GLOBAL_TOKEN_USAGE_KEY],
+    arguments: [
+      String(AI_REVIEW_GLOBAL_TOKEN_LIMIT),
+      String(reservedTokens),
+      String(AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS),
+    ],
+  });
+  const result = Array.isArray(rawResult) ? rawResult : [];
+  const allowed = Number(result[0] ?? 0) === 1;
+  const usedTokens = toSafeNonNegativeInteger(result[1] ?? 0);
+  const ttlSeconds = Number(result[2] ?? -2);
+  const globalTokenQuota = createAiReviewGlobalTokenQuota(usedTokens, ttlSeconds);
+
+  if (!allowed) {
+    throw createAiReviewQuotaError(
+      "A globális 24 órás AI tokenkeret nem elég ehhez a review kéréshez.",
+      429,
+      globalTokenQuota,
+    );
+  }
+
+  return globalTokenQuota;
+}
+
+function normalizeTotalTokenUsage(response: OpenAIResponse, fallbackTotal: number) {
+  const totalTokens = response.usage?.total_tokens;
+
+  if (typeof totalTokens === "number" && Number.isFinite(totalTokens) && totalTokens >= 0) {
+    return Math.trunc(totalTokens);
+  }
+
+  return fallbackTotal;
+}
+
+export async function getAiReviewGlobalTokenQuota() {
+  const client = await requireRedisQuotaClient();
+  const [rawUsed, ttlSeconds] = await Promise.all([
+    client.get(AI_REVIEW_GLOBAL_TOKEN_USAGE_KEY),
+    client.ttl(AI_REVIEW_GLOBAL_TOKEN_USAGE_KEY),
+  ]);
+
+  return createAiReviewGlobalTokenQuota(toSafeNonNegativeInteger(rawUsed ?? 0), ttlSeconds);
 }
 
 function readResponseText(response: OpenAIResponse): string {
@@ -568,7 +790,7 @@ function buildReviewRequest(
 }
 
 export function isAiReviewAvailable() {
-  return hasOpenAIApiKey() && isAiReviewDependencyInstalled();
+  return hasOpenAIApiKey() && isAiReviewDependencyInstalled() && isAiReviewQuotaStoreConfigured();
 }
 
 export function isAiReviewDependencyInstalled() {
@@ -576,8 +798,8 @@ export function isAiReviewDependencyInstalled() {
 }
 
 export function getAiReviewUnavailableReason() {
-  if (!hasOpenAIApiKey() && !isAiReviewDependencyInstalled()) {
-    return "Az AI review nincs teljesen bekötve ezen a környezeten: hiányzik az OPENAI_API_KEY és az openai csomag is.";
+  if (!hasOpenAIApiKey() && !isAiReviewDependencyInstalled() && !isAiReviewQuotaStoreConfigured()) {
+    return "Az AI review nincs teljesen bekötve ezen a környezeten: hiányzik az OPENAI_API_KEY, az openai csomag vagy a REDIS_URL.";
   }
 
   if (!hasOpenAIApiKey()) {
@@ -586,6 +808,10 @@ export function getAiReviewUnavailableReason() {
 
   if (!isAiReviewDependencyInstalled()) {
     return "Az AI reviewhez az openai csomagnak is telepítve kell lennie ezen a környezeten.";
+  }
+
+  if (!isAiReviewQuotaStoreConfigured()) {
+    return "Az AI review globális tokenkeretéhez REDIS_URL szükséges ezen a környezeten.";
   }
 
   return null;
@@ -614,7 +840,7 @@ export async function generateAiReview(options: {
   task: WorkspaceTask;
   code: string;
   verdict: AiReviewVerdictInput;
-}): Promise<AiReviewResult> {
+}): Promise<{ review: AiReviewResult; globalTokenQuota: AiReviewGlobalTokenQuota }> {
   const client = createOpenAIClient();
 
   if (!client) {
@@ -622,42 +848,52 @@ export async function generateAiReview(options: {
   }
 
   const request = buildReviewRequest(options.task, options.code, options.verdict);
+  const baseRequestOptions = buildOpenAIBaseRequestOptions(request);
+  const inputTokenCount = await client.responses.inputTokens.count(baseRequestOptions);
+  const reservedTokens = toSafeNonNegativeInteger(inputTokenCount.input_tokens) + AI_REVIEW_MAX_COMPLETION_TOKENS;
 
-  const response = await client.responses.create({
-    model: getModelName(),
-    instructions: request.instructions,
-    input: request.input,
-    max_output_tokens: AI_REVIEW_MAX_COMPLETION_TOKENS,
-    reasoning: {
-      effort: "minimal",
-    },
-    text: {
-      format: {
-        type: "json_schema",
-        name: "ai_review_result",
-        schema: AI_REVIEW_RESPONSE_SCHEMA,
-        strict: true,
+  await reserveAiReviewGlobalTokens(reservedTokens);
+
+  let response: OpenAIResponse | null = null;
+
+  try {
+    response = await client.responses.create({
+      ...baseRequestOptions,
+      max_output_tokens: AI_REVIEW_MAX_COMPLETION_TOKENS,
+    });
+
+    const rawContent = readResponseText(response);
+    const rawJson = extractJsonObject(rawContent);
+    const parsed = JSON.parse(rawJson) as unknown;
+    const normalized = normalizeReviewPayload(parsed, options.verdict);
+    const globalTokenQuota = await adjustAiReviewGlobalTokenUsage(
+      normalizeTotalTokenUsage(response, reservedTokens) - reservedTokens,
+    );
+
+    return {
+      review: {
+        ...normalized,
+        createdAt: new Date().toISOString(),
+        model: response.model,
+        requestId: response._request_id ?? response.id ?? null,
+        basedOn: {
+          judgeScore: options.verdict.score,
+          passed: options.verdict.passed,
+          total: options.verdict.total,
+          mode: options.verdict.mode,
+          suite: options.verdict.suite,
+        },
       },
-      verbosity: "low",
-    },
-  });
+      globalTokenQuota,
+    };
+  } catch (error) {
+    try {
+      const actualUsage = response ? normalizeTotalTokenUsage(response, reservedTokens) : 0;
+      await adjustAiReviewGlobalTokenUsage(actualUsage - reservedTokens);
+    } catch {
+      // Preserve the original AI review failure if quota reconciliation also fails.
+    }
 
-  const rawContent = readResponseText(response);
-  const rawJson = extractJsonObject(rawContent);
-  const parsed = JSON.parse(rawJson) as unknown;
-  const normalized = normalizeReviewPayload(parsed, options.verdict);
-
-  return {
-    ...normalized,
-    createdAt: new Date().toISOString(),
-    model: response.model,
-    requestId: response._request_id ?? response.id ?? null,
-    basedOn: {
-      judgeScore: options.verdict.score,
-      passed: options.verdict.passed,
-      total: options.verdict.total,
-      mode: options.verdict.mode,
-      suite: options.verdict.suite,
-    },
-  };
+    throw error;
+  }
 }

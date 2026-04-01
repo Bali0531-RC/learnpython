@@ -45,6 +45,14 @@ export type AiReviewQuota = {
   remaining: number;
 };
 
+export type AiReviewGlobalTokenQuota = {
+  limit: number;
+  used: number;
+  remaining: number;
+  windowSeconds: number;
+  resetAt: string | null;
+};
+
 export type AiReviewResult = {
   score: number;
   summary: string;
@@ -75,6 +83,7 @@ export type AiReviewRouteResponse = {
   ok: boolean;
   available: boolean;
   quota: AiReviewQuota;
+  globalTokenQuota?: AiReviewGlobalTokenQuota;
   model?: string;
   review?: AiReviewResult;
   error?: string;

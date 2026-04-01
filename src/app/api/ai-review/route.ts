@@ -8,9 +8,11 @@ import type {
 import {
   AI_REVIEW_COOKIE_NAME,
   generateAiReview,
+  getAiReviewGlobalTokenQuota,
   getAiReviewModel,
   getAiReviewQuota,
   getAiReviewUnavailableReason,
+  isAiReviewQuotaError,
   isAiReviewAvailable,
   readAiReviewQuota,
 } from "@/lib/ai-review";
@@ -18,6 +20,72 @@ import { getWorkspaceTaskContent } from "@/lib/content-store";
 
 function jsonResponse(body: AiReviewRouteResponse, status = 200) {
   return Response.json(body, { status });
+}
+
+async function getAiReviewRouteState(cookieValue?: string | null) {
+  const quota = readAiReviewQuota(cookieValue);
+
+  if (quota.remaining <= 0) {
+    return {
+      available: false,
+      quota,
+      globalTokenQuota: undefined,
+      model: getAiReviewModel(),
+      error: "Ebben a böngészőben elfogyott a 20 darabos AI review keret.",
+      status: 429,
+    };
+  }
+
+  if (!isAiReviewAvailable()) {
+    return {
+      available: false,
+      quota,
+      globalTokenQuota: undefined,
+      model: getAiReviewModel(),
+      error:
+        getAiReviewUnavailableReason() ??
+        "Az AI review még nincs bekapcsolva ezen a környezeten.",
+      status: 503,
+    };
+  }
+
+  try {
+    const globalTokenQuota = await getAiReviewGlobalTokenQuota();
+
+    if (globalTokenQuota.remaining <= 0) {
+      return {
+        available: false,
+        quota,
+        globalTokenQuota,
+        model: getAiReviewModel(),
+        error: "A globális 24 órás AI tokenkeret elfogyott. Várd meg a következő ablakot.",
+        status: 429,
+      };
+    }
+
+    return {
+      available: true,
+      quota,
+      globalTokenQuota,
+      model: getAiReviewModel(),
+      error: undefined,
+      status: 200,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Ismeretlen quota store hiba történt.";
+
+    return {
+      available: false,
+      quota,
+      globalTokenQuota: undefined,
+      model: getAiReviewModel(),
+      error:
+        process.env.NODE_ENV === "development"
+          ? `Az AI review globális tokenkerete most nem olvasható ki: ${message}`
+          : "Az AI review globális tokenkerete most nem érhető el.",
+      status: 503,
+    };
+  }
 }
 
 function formatAiReviewError(error: unknown) {
@@ -85,48 +153,34 @@ function normalizeVerdict(verdict: unknown): AiReviewVerdictInput | null {
 
 export async function GET() {
   const cookieStore = await cookies();
-  const quota = readAiReviewQuota(cookieStore.get(AI_REVIEW_COOKIE_NAME)?.value);
-  const available = isAiReviewAvailable();
+  const routeState = await getAiReviewRouteState(cookieStore.get(AI_REVIEW_COOKIE_NAME)?.value);
 
   return jsonResponse({
     ok: true,
-    available,
-    quota,
-    model: getAiReviewModel(),
-    error: available ? undefined : getAiReviewUnavailableReason() ?? undefined,
+    available: routeState.available,
+    quota: routeState.quota,
+    globalTokenQuota: routeState.globalTokenQuota,
+    model: routeState.model,
+    error: routeState.available ? undefined : routeState.error,
   });
 }
 
 export async function POST(request: Request) {
   const cookieStore = await cookies();
-  const quota = readAiReviewQuota(cookieStore.get(AI_REVIEW_COOKIE_NAME)?.value);
-  const available = isAiReviewAvailable();
+  const routeState = await getAiReviewRouteState(cookieStore.get(AI_REVIEW_COOKIE_NAME)?.value);
+  const { quota, globalTokenQuota, model } = routeState;
 
-  if (!available) {
+  if (!routeState.available) {
     return jsonResponse(
       {
         ok: false,
-        available,
+        available: false,
         quota,
-        model: getAiReviewModel(),
-        error:
-          getAiReviewUnavailableReason() ??
-          "Az AI review még nincs bekapcsolva ezen a környezeten.",
+        globalTokenQuota,
+        model,
+        error: routeState.error,
       },
-      503,
-    );
-  }
-
-  if (quota.remaining <= 0) {
-    return jsonResponse(
-      {
-        ok: false,
-        available,
-        quota,
-        model: getAiReviewModel(),
-        error: "Ebben a böngészőben elfogyott a 20 darabos AI review keret.",
-      },
-      429,
+      routeState.status,
     );
   }
 
@@ -138,9 +192,10 @@ export async function POST(request: Request) {
     return jsonResponse(
       {
         ok: false,
-        available,
+        available: routeState.available,
         quota,
-        model: getAiReviewModel(),
+        globalTokenQuota,
+        model,
         error: "A kérés törzse nem értelmezhető JSON-ként.",
       },
       400,
@@ -155,9 +210,10 @@ export async function POST(request: Request) {
     return jsonResponse(
       {
         ok: false,
-        available,
+        available: routeState.available,
         quota,
-        model: getAiReviewModel(),
+        globalTokenQuota,
+        model,
         error: "Az AI review kéréshez taskId, kód és érvényes verdict szükséges.",
       },
       400,
@@ -170,9 +226,10 @@ export async function POST(request: Request) {
     return jsonResponse(
       {
         ok: false,
-        available,
+        available: routeState.available,
         quota,
-        model: getAiReviewModel(),
+        globalTokenQuota,
+        model,
         error: "A megadott feladat nem található az aktuális tartalomtárban.",
       },
       404,
@@ -180,7 +237,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const review = await generateAiReview({
+    const result = await generateAiReview({
       task,
       code: code.trim(),
       verdict,
@@ -197,18 +254,34 @@ export async function POST(request: Request) {
 
     return jsonResponse({
       ok: true,
-      available,
+      available: routeState.available,
       quota: nextQuota,
-      model: getAiReviewModel(),
-      review,
+      globalTokenQuota: result.globalTokenQuota,
+      model,
+      review: result.review,
     });
   } catch (error) {
+    if (isAiReviewQuotaError(error)) {
+      return jsonResponse(
+        {
+          ok: false,
+          available: false,
+          quota,
+          globalTokenQuota: error.globalTokenQuota ?? globalTokenQuota,
+          model,
+          error: error.message,
+        },
+        error.status,
+      );
+    }
+
     return jsonResponse(
       {
         ok: false,
-        available,
+        available: routeState.available,
         quota,
-        model: getAiReviewModel(),
+        globalTokenQuota,
+        model,
         error: formatAiReviewError(error),
       },
       502,

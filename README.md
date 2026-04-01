@@ -12,7 +12,7 @@ Magyar nyelvű, dockerizált felkészítő platform a digitális kultúra érett
 - külön Python judge service szigorított vizsgamódú AST-ellenőrzéssel és processzlimitekkel
 - a judge konténer hard capje 1 CPU-mag, 2 GB RAM és 5 GB írható sandbox-terület, túllépéskor a futás megszakad és a felület visszajelzi az okot
 - valódi light és dark mode váltó a felületen
-- opcionális OpenAI review a legutóbbi judge-olt submissionhöz, böngészőnként 20 kéréses cookie-kerettel
+- opcionális OpenAI review a legutóbbi judge-olt submissionhöz, böngészőnként 20 kéréses cookie-kerettel és globális 24 órás tokenlimittel
 
 ## Technológiai irány
 
@@ -78,7 +78,15 @@ Jellemzők:
 - az AI review csak már judge-olt kódhoz kérhető
 - a review a legutóbbi futtatott vagy beküldött kódváltozatot elemzi, nem a még el nem futtatott editorállapotot
 - a keret böngészőnként 20 kérés, szerveroldali HTTP-only cookie-ban tárolva
+- van egy globális, minden userre közös 24 órás tokenkeret is, alapértelmezetten összesen 2 000 000 input+output tokennel Redisben számlálva
 - a deterministic judge pontszám marad az elsődleges igazságforrás, az AI review ehhez ad magyar nyelvű összképet, tippeket és egy külön AI pontszámot
+
+Opcionális finomhangoló env változók:
+
+```bash
+AI_REVIEW_GLOBAL_TOKEN_LIMIT=2000000
+AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS=86400
+```
 
 ## Ellenőrzés
 
@@ -119,4 +127,4 @@ npm run db:studio
 2. Profilok, auth és submission persistence bekötése a most létrehozott sémára.
 3. A pontozott beküldés szerveroldali mentése submission és submission-result rekordokba.
 4. Lesson-progress számolás szerveroldalon, nem csak localStorage-ból.
-5. Auth és valódi user-szintű quota/persistencia ráhúzása a mostani böngésző-cookie alapú AI review-ra.
+5. Auth és valódi user-szintű quota/persistencia ráhúzása a mostani böngésző-cookie + globális Redis tokenkeretes AI review-ra.

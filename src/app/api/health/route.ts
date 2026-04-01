@@ -1,16 +1,40 @@
-import { getAiReviewModel, isAiReviewAvailable, isAiReviewDependencyInstalled } from "@/lib/ai-review";
+import {
+  getAiReviewGlobalTokenQuota,
+  getAiReviewModel,
+  isAiReviewAvailable,
+  isAiReviewDependencyInstalled,
+  isAiReviewQuotaStoreConfigured,
+} from "@/lib/ai-review";
 import { db } from "@/lib/db";
 
-function getAiReviewHealth() {
+async function getAiReviewHealth() {
   const hasApiKey = Boolean(process.env.OPENAI_API_KEY?.trim());
 
-  return {
-    ok: isAiReviewAvailable(),
-    hasApiKey,
-    packageInstalled: isAiReviewDependencyInstalled(),
-    model: getAiReviewModel(),
-    quotaMode: "browser-cookie-20",
-  };
+  try {
+    const globalTokenQuota = isAiReviewQuotaStoreConfigured()
+      ? await getAiReviewGlobalTokenQuota()
+      : undefined;
+
+    return {
+      ok: isAiReviewAvailable(),
+      hasApiKey,
+      packageInstalled: isAiReviewDependencyInstalled(),
+      quotaStoreConfigured: isAiReviewQuotaStoreConfigured(),
+      model: getAiReviewModel(),
+      quotaMode: "browser-cookie-20 + redis-global-total-tokens-24h",
+      globalTokenQuota,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      hasApiKey,
+      packageInstalled: isAiReviewDependencyInstalled(),
+      quotaStoreConfigured: isAiReviewQuotaStoreConfigured(),
+      model: getAiReviewModel(),
+      quotaMode: "browser-cookie-20 + redis-global-total-tokens-24h",
+      quotaError: error instanceof Error ? error.message : "Ismeretlen AI quota hiba.",
+    };
+  }
 }
 
 function resolveDatabaseHealthError(error: unknown) {
@@ -61,6 +85,7 @@ function resolveDatabaseHealthError(error: unknown) {
 
 export async function GET() {
   const judgeUrl = process.env.JUDGE_API_URL ?? "http://127.0.0.1:8001";
+  const aiReviewHealth = await getAiReviewHealth();
 
   try {
     const [lessons, lessonLinks, tasks, archiveEntries, profiles, submissions] =
@@ -77,7 +102,7 @@ export async function GET() {
       ok: true,
       app: "kodrettsegi-web",
       judgeUrl,
-      aiReview: getAiReviewHealth(),
+      aiReview: aiReviewHealth,
       database: {
         ok: true,
         provider: "postgresql",
@@ -98,7 +123,7 @@ export async function GET() {
       ok: true,
       app: "kodrettsegi-web",
       judgeUrl,
-      aiReview: getAiReviewHealth(),
+      aiReview: aiReviewHealth,
       database: {
         ok: false,
         provider: "postgresql",

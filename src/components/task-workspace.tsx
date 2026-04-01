@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type {
+  AiReviewGlobalTokenQuota,
   AiReviewQuota,
   AiReviewResult,
   AiReviewRouteResponse,
@@ -21,6 +22,12 @@ import {
   type StoredAiReviewRecord,
   type StoredVerdictRecord,
 } from "@/lib/workspace-storage";
+
+const tokenCountFormatter = new Intl.NumberFormat("hu-HU");
+
+function formatTokenCount(value: number) {
+  return tokenCountFormatter.format(Math.max(0, Math.trunc(value)));
+}
 
 type JudgeResultRow = {
   label: string;
@@ -128,6 +135,7 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
   const [aiReview, setAiReview] = useState<AiReviewResult | null>(null);
   const [aiReviewError, setAiReviewError] = useState<string | null>(null);
   const [aiReviewQuota, setAiReviewQuota] = useState<AiReviewQuota | null>(null);
+  const [aiReviewGlobalQuota, setAiReviewGlobalQuota] = useState<AiReviewGlobalTokenQuota | null>(null);
   const [aiReviewAvailable, setAiReviewAvailable] = useState(false);
   const [aiReviewAvailabilityMessage, setAiReviewAvailabilityMessage] = useState<string | null>(null);
   const [isAiReviewPending, setIsAiReviewPending] = useState(false);
@@ -153,7 +161,8 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
     aiReviewAvailable &&
     !isPending &&
     !isAiReviewPending &&
-    (aiReviewQuota?.remaining ?? 1) > 0;
+    (aiReviewQuota?.remaining ?? 1) > 0 &&
+    (aiReviewGlobalQuota?.remaining ?? 1) > 0;
 
   useEffect(() => {
     const storedDraft = loadTaskDraft(task.id);
@@ -165,6 +174,7 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
     setAiReview(null);
     setAiReviewError(null);
     setAiReviewQuota(null);
+    setAiReviewGlobalQuota(null);
     setAiReviewAvailable(false);
     setAiReviewAvailabilityMessage(null);
     setIsAiReviewPending(false);
@@ -193,6 +203,7 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
 
         setAiReviewAvailable(Boolean(data.available));
         setAiReviewQuota(data.quota ?? null);
+        setAiReviewGlobalQuota(data.globalTokenQuota ?? null);
         setAiReviewAvailabilityMessage(data.available ? null : data.error ?? null);
       } catch {
         if (isCancelled) {
@@ -201,6 +212,7 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
 
         setAiReviewAvailable(false);
         setAiReviewQuota(null);
+        setAiReviewGlobalQuota(null);
         setAiReviewAvailabilityMessage(
           "Az AI review állapota most nem olvasható ki a szerverről.",
         );
@@ -366,6 +378,7 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
 
       setAiReviewAvailable(Boolean(data.available));
       setAiReviewQuota(data.quota ?? null);
+      setAiReviewGlobalQuota(data.globalTokenQuota ?? null);
       setAiReviewAvailabilityMessage(data.available ? null : data.error ?? null);
 
       if (!response.ok || !data.ok || !data.review) {
@@ -833,18 +846,33 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
               OpenAI kódreview a submissionhöz
             </h2>
           </div>
-          {aiReviewQuota ? (
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-sm text-[var(--muted)]">
-              {aiReviewQuota.remaining}/{aiReviewQuota.limit} maradt
-            </span>
-          ) : null}
+          <div className="flex flex-wrap gap-3">
+            {aiReviewQuota ? (
+              <span className="rounded-full border border-[var(--line)] px-4 py-2 text-sm text-[var(--muted)]">
+                {aiReviewQuota.remaining}/{aiReviewQuota.limit} kérés maradt
+              </span>
+            ) : null}
+            {aiReviewGlobalQuota ? (
+              <span className="rounded-full border border-[var(--line)] px-4 py-2 text-sm text-[var(--muted)]">
+                {formatTokenCount(aiReviewGlobalQuota.remaining)}/{formatTokenCount(aiReviewGlobalQuota.limit)} token maradt
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <div className="mt-6 space-y-4">
           <div className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
             <p className="text-sm leading-6 text-[var(--muted)]">
-              Az AI review az utolsó judge-olt kódváltozatot és a legutóbbi verdictet elemzi magyar nyelvű visszajelzéssel. A szerveroldali keret böngészőnként legfeljebb 20 kérés.
+              Az AI review az utolsó judge-olt kódváltozatot és a legutóbbi verdictet elemzi magyar nyelvű visszajelzéssel. A szerveroldali keret böngészőnként legfeljebb 20 kérés, és ezen felül van egy globális 24 órás input+output tokenlimit is minden userre együtt.
             </p>
+            {aiReviewGlobalQuota ? (
+              <p className="mt-4 text-sm leading-6 text-[var(--muted)]">
+                Globális 24 órás keret: {formatTokenCount(aiReviewGlobalQuota.remaining)} token maradt a {formatTokenCount(aiReviewGlobalQuota.limit)}-ből.
+                {aiReviewGlobalQuota.resetAt
+                  ? ` Következő reset: ${formatLocalTimestamp(aiReviewGlobalQuota.resetAt)}.`
+                  : " A 24 órás ablak az első új review kérésnél indul."}
+              </p>
+            ) : null}
             {codeDiffersFromLastVerdict ? (
               <p className="mt-4 rounded-2xl border border-[#d97706]/30 bg-[#d97706]/10 px-4 py-3 text-sm leading-6 text-[#8a4b06] dark:text-[#ffd7aa]">
                 Az editor tartalma már eltér az utolsó futtatott verziótól. Az AI review most még a legutóbbi judge-olt kódot értékeli. Ha az új módosításokra is szeretnél review-t, futtasd újra a megoldást.
