@@ -15,7 +15,10 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "docker:up": "docker compose up --build",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "docker:bootstrap:prod": "docker compose -f docker-compose.prod.yml run --build --rm web sh -c \"npm run db:push && npm run db:seed\"",
+    "docker:up:prod": "docker compose -f docker-compose.prod.yml up -d --build",
+    "docker:down:prod": "docker compose -f docker-compose.prod.yml down"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

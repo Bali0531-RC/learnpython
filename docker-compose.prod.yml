@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: dev
-    command: sh -c "npm run db:push && npm run db:seed && npm run dev -- --hostname 0.0.0.0"
+      target: runner
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -13,31 +13,26 @@ services:
       judge:
         condition: service_started
     environment:
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      ALLOWED_DEV_ORIGINS: ${ALLOWED_DEV_ORIGINS:-learn.bali0531.hu}
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://learn.bali0531.hu}
       JUDGE_API_URL: ${DOCKER_JUDGE_API_URL:-http://judge:8000}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@db:5432/erettsegi}
       REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_REVIEW_MODEL: ${OPENAI_REVIEW_MODEL:-gpt-5.4}
+      AI_REVIEW_GLOBAL_TOKEN_LIMIT: ${AI_REVIEW_GLOBAL_TOKEN_LIMIT:-2000000}
+      AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS: ${AI_REVIEW_GLOBAL_TOKEN_WINDOW_SECONDS:-86400}
     ports:
-      - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
+      - "127.0.0.1:3000:3000"
 
   judge:
     build:
       context: ./services/judge
       dockerfile: Dockerfile
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
     cpus: 1.0
     mem_limit: 2g
     memswap_limit: 2g
-    ports:
-      - "127.0.0.1:8001:8000"
-    volumes:
-      - ./services/judge:/app:ro
     storage_opt:
       size: "5G"
     read_only: true
@@ -52,6 +47,7 @@ services:
 
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: erettsegi
       POSTGRES_USER: postgres
@@ -61,15 +57,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
 
 volumes:
   postgres-data:
+  redis-data:

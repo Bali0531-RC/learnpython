@@ -3,8 +3,14 @@
 .next
 node_modules
 npm-debug.log
+.env
+.env.*
+.venv
+coverage
 Dockerfile
 docker-compose.yml
+docker-compose.prod.yml
 README.md
+services/judge/.venv
 services/judge/__pycache__
 services/judge/.pytest_cache
