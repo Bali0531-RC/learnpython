@@ -32,6 +32,8 @@ npm run docker:up
 
 A compose-os `web` indulás fejlesztői környezetben automatikusan lefuttatja a `prisma db push` és `prisma db seed` lépéseket is, így a PostgreSQL konténer nem marad üres sémával.
 
+Ha a `next dev` szervert reverse proxy vagy Cloudflare mögött használod, állítsd az `ALLOWED_DEV_ORIGINS` értékét a publikus hostra, különben a Next 16 letilthatja a dev-only `_next/*` és HMR kéréseket.
+
 Ez elindítja a következő szolgáltatásokat:
 
 - `web` a Next.js alkalmazáshoz a `http://localhost:3000` címen
@@ -61,6 +63,8 @@ npm run dev
 ```
 
 A webes felület külön is elindul, de az interaktív futtatás és beküldés csak akkor működik, ha a judge service is fut. Ehhez a legegyszerűbb a dockeres judge használata, vagy a `JUDGE_API_URL` beállítása egy elérhető judge példányra.
+
+Publikus proxy mögötti fejlesztésnél itt is add meg az `ALLOWED_DEV_ORIGINS` változót, például `ALLOWED_DEV_ORIGINS=learn.bali0531.hu npm run dev`.
 
 ## OpenAI review bekapcsolása
 
