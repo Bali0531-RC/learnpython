@@ -67,10 +67,62 @@ const lessonCatalog: LessonCatalogEntry[] = lessonPhases.flatMap((phase) =>
     phaseSlug: phase.slug,
     phaseTitle: phase.title,
     phaseAudience: phase.audience,
-    path: `/tanulas#${lesson.id}`,
+    path: `/tanulas/${lesson.id}`,
   })),
 );
 const lessonCatalogById = new Map(lessonCatalog.map((lesson) => [lesson.id, lesson]));
+const lessonPracticeFallbackByLessonId: Partial<Record<string, LessonTaskLink>> = {
+  "shared-13": {
+    kind: "practice",
+    targetId: "ponttabla",
+    reason: "Többlépcsős, többválaszos drill a hosszabb prompt részekre bontásának begyakorlására.",
+  },
+  "shared-16": {
+    kind: "practice",
+    targetId: "jelvenyrajz",
+    reason: "A precíz karakteres kimenet itt rögtön gyakorló feladaton is visszajön, nem csak archív mintán.",
+  },
+  "kozep-05": {
+    kind: "practice",
+    targetId: "liftnaplo",
+    reason: "Egyszerű állapotfrissítés és blokkolt lépések egy közép szintű, jól követhető szimulációban.",
+  },
+  "kozep-06": {
+    kind: "practice",
+    targetId: "ponttabla",
+    reason: "Tie-break és több részkérdés ugyanabban a rövid gyakorlóban, a közép csavarok célzott ismétlésére.",
+  },
+  "kozep-07": {
+    kind: "practice",
+    targetId: "buszora",
+    reason: "Időalapú parsing és többkimenetes összesítés egy tipikus közép szintű workflow-ban.",
+  },
+  "emelt-01": {
+    kind: "practice",
+    targetId: "vizsgabeosztas",
+    reason: "Hosszabb, részfeladatokra bontható emelt drill, amely jól kényszerít előzetes tervkészítésre.",
+  },
+  "emelt-03": {
+    kind: "practice",
+    targetId: "muszakrend",
+    reason: "Ütemezési és kiosztási logika interaktív gyakorlóban, hivatalos archívum mellé.",
+  },
+  "emelt-05": {
+    kind: "practice",
+    targetId: "tetojaror",
+    reason: "Koordináta, mozgás és határkezelés rögtön interaktív, lépésenként tesztelhető feladaton.",
+  },
+  "emelt-06": {
+    kind: "practice",
+    targetId: "jelvenyrajz",
+    reason: "ASCII és karakterprioritás saját gyakorlófeladaton is elérhető az archív referencia mellett.",
+  },
+  "emelt-08": {
+    kind: "practice",
+    targetId: "kapunaplo",
+    reason: "Több szabály kölcsönhatása és hibás események kezelése egy interaktív emelt drillben.",
+  },
+};
 
 export function resolveLessonTaskLink(
   link: LessonTaskLink,
@@ -110,10 +162,35 @@ export function resolveLessonTaskLink(
   };
 }
 
+export function ensureLessonHasPracticeLink(
+  lessonId: string,
+  links: ResolvedLessonTaskLink[],
+): ResolvedLessonTaskLink[] {
+  if (links.some((link) => link.kind === "practice")) {
+    return links;
+  }
+
+  const fallback = lessonPracticeFallbackByLessonId[lessonId];
+
+  if (!fallback) {
+    return links;
+  }
+
+  const resolvedFallback = resolveLessonTaskLink(fallback);
+
+  if (!resolvedFallback) {
+    return links;
+  }
+
+  return [...links, resolvedFallback];
+}
+
 export function getResolvedLessonTaskLinks(lessonId: string): ResolvedLessonTaskLink[] {
-  return (lessonTaskLinksByLessonId[lessonId] ?? [])
+  const resolvedLinks = (lessonTaskLinksByLessonId[lessonId] ?? [])
     .map(resolveLessonTaskLink)
     .filter((item): item is ResolvedLessonTaskLink => Boolean(item));
+
+  return ensureLessonHasPracticeLink(lessonId, resolvedLinks);
 }
 
 export function getLessonCatalogEntry(lessonId: string): LessonCatalogEntry | null {

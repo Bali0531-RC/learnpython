@@ -1,4 +1,17 @@
+import { getAiReviewModel, isAiReviewAvailable, isAiReviewDependencyInstalled } from "@/lib/ai-review";
 import { db } from "@/lib/db";
+
+function getAiReviewHealth() {
+  const hasApiKey = Boolean(process.env.OPENAI_API_KEY?.trim());
+
+  return {
+    ok: isAiReviewAvailable(),
+    hasApiKey,
+    packageInstalled: isAiReviewDependencyInstalled(),
+    model: getAiReviewModel(),
+    quotaMode: "browser-cookie-20",
+  };
+}
 
 function resolveDatabaseHealthError(error: unknown) {
   if (!process.env.DATABASE_URL) {
@@ -64,6 +77,7 @@ export async function GET() {
       ok: true,
       app: "kodrettsegi-web",
       judgeUrl,
+      aiReview: getAiReviewHealth(),
       database: {
         ok: true,
         provider: "postgresql",
@@ -84,6 +98,7 @@ export async function GET() {
       ok: true,
       app: "kodrettsegi-web",
       judgeUrl,
+      aiReview: getAiReviewHealth(),
       database: {
         ok: false,
         provider: "postgresql",

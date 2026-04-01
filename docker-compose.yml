@@ -13,9 +13,11 @@ services:
         condition: service_started
     environment:
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      JUDGE_API_URL: ${JUDGE_API_URL:-http://judge:8000}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/erettsegi}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JUDGE_API_URL: ${DOCKER_JUDGE_API_URL:-http://judge:8000}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@db:5432/erettsegi}
+      REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_REVIEW_MODEL: ${OPENAI_REVIEW_MODEL:-gpt-5.4}
     ports:
       - "3000:3000"
     volumes:

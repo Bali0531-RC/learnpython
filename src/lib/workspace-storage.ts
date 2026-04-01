@@ -1,17 +1,23 @@
+import type { AiReviewFinding, AiReviewImprovedExample } from "@/lib/ai-review-types";
 import type { TaskSource, TaskTrack } from "@/lib/task-types";
 
 const DRAFTS_KEY = "kodrettsegi:workspace-drafts:v1";
 const HISTORY_KEY = "kodrettsegi:workspace-history:v1";
+const AI_REVIEWS_KEY = "kodrettsegi:workspace-ai-reviews:v1";
 const HISTORY_LIMIT = 40;
+const AI_REVIEW_HISTORY_LIMIT = 40;
 const STORAGE_EVENT = "kodrettsegi:workspace-storage";
 
 const EMPTY_DRAFTS: StoredDraftRecord[] = [];
 const EMPTY_HISTORY: StoredVerdictRecord[] = [];
+const EMPTY_AI_REVIEWS: StoredAiReviewRecord[] = [];
 
 let cachedDraftsRaw = "";
 let cachedDraftsSnapshot: StoredDraftRecord[] = EMPTY_DRAFTS;
 let cachedHistoryRaw = "";
 let cachedHistorySnapshot: StoredVerdictRecord[] = EMPTY_HISTORY;
+let cachedAiReviewsRaw = "";
+let cachedAiReviewsSnapshot: StoredAiReviewRecord[] = EMPTY_AI_REVIEWS;
 
 export type StoredDraftRecord = {
   taskId: string;
@@ -41,6 +47,28 @@ export type StoredVerdictRecord = {
   passed: number;
   total: number;
   blocked: boolean;
+  createdAt: string;
+};
+
+export type StoredAiReviewRecord = {
+  id: string;
+  taskId: string;
+  taskPath: string;
+  taskTitle: string;
+  track: TaskTrack;
+  level: "Közép" | "Emelt";
+  family: string;
+  sourceKind: TaskSource["kind"];
+  mode: "run" | "submit";
+  suite: "public" | "hidden";
+  reviewScore: number;
+  judgeScore: number;
+  summary: string;
+  strengths: string[];
+  findings: AiReviewFinding[];
+  tips: string[];
+  nextStep: string;
+  improvedExample?: AiReviewImprovedExample;
   createdAt: string;
 };
 
@@ -173,6 +201,39 @@ export function getWorkspaceHistorySnapshot(): StoredVerdictRecord[] {
   cachedHistoryRaw = raw;
   cachedHistorySnapshot = listWorkspaceHistory();
   return cachedHistorySnapshot;
+}
+
+export function listAiReviews(): StoredAiReviewRecord[] {
+  return readJson<StoredAiReviewRecord[]>(AI_REVIEWS_KEY, []).sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt),
+  );
+}
+
+export function getAiReviewsSnapshot(): StoredAiReviewRecord[] {
+  if (!isBrowser()) {
+    return EMPTY_AI_REVIEWS;
+  }
+
+  const raw = window.localStorage.getItem(AI_REVIEWS_KEY) ?? "";
+
+  if (raw === cachedAiReviewsRaw) {
+    return cachedAiReviewsSnapshot;
+  }
+
+  cachedAiReviewsRaw = raw;
+  cachedAiReviewsSnapshot = listAiReviews();
+  return cachedAiReviewsSnapshot;
+}
+
+export function listTaskAiReviews(taskId: string): StoredAiReviewRecord[] {
+  return listAiReviews().filter((entry) => entry.taskId === taskId);
+}
+
+export function appendTaskAiReview(entry: StoredAiReviewRecord) {
+  const reviews = [entry, ...listAiReviews()].slice(0, AI_REVIEW_HISTORY_LIMIT);
+  writeJson(AI_REVIEWS_KEY, reviews);
+  notifyStorageChange();
+  return reviews;
 }
 
 export function listTaskHistory(taskId: string): StoredVerdictRecord[] {

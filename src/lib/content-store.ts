@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { getArchiveTaskById } from "./archive-tasks";
 import { db } from "./db";
 import {
+  ensureLessonHasPracticeLink,
   getResolvedLessonTaskLinks,
   type ResolvedLessonTaskLink,
 } from "./lesson-links";
@@ -27,6 +28,13 @@ import type {
 } from "./task-types";
 
 export type LessonWithResourceLinks = Lesson & {
+  path: string;
+  phaseSlug: string;
+  phaseTitle: string;
+  phaseAudience: string;
+  phaseDescription: string;
+  phaseOrder: number;
+  orderInPhase: number;
   resourceLinks: ResolvedLessonTaskLink[];
 };
 
@@ -79,6 +87,10 @@ function byStaticOrder<T extends { id: string }>(
 
 function asJson<T>(value: Prisma.JsonValue | null | undefined, fallback: T): T {
   return (value ?? fallback) as T;
+}
+
+function buildLessonPath(lessonId: string) {
+  return `/tanulas/${lessonId}`;
 }
 
 function mapDbTask(task: TaskRecord): WorkspaceTask {
@@ -157,10 +169,17 @@ function mapDbArchiveEntry(entry: Prisma.ArchiveEntryGetPayload<object>): Archiv
 }
 
 function buildStaticLearningPhases(): LessonPhaseWithResourceLinks[] {
-  return lessonPhases.map((phase) => ({
+  return lessonPhases.map((phase, phaseOrder) => ({
     ...phase,
-    lessons: phase.lessons.map((lesson) => ({
+    lessons: phase.lessons.map((lesson, orderInPhase) => ({
       ...lesson,
+      path: buildLessonPath(lesson.id),
+      phaseSlug: phase.slug,
+      phaseTitle: phase.title,
+      phaseAudience: phase.audience,
+      phaseDescription: phase.description,
+      phaseOrder,
+      orderInPhase,
       resourceLinks: getResolvedLessonTaskLinks(lesson.id),
     })),
   }));
@@ -176,17 +195,27 @@ function buildLearningPhasesFromDb(lessons: LessonRecord[]): LessonPhaseWithReso
       title: lesson.title,
       summary: lesson.summary,
       examValue: lesson.examValue,
-      resourceLinks: lesson.resourceLinks
-        .sort((left, right) => left.position - right.position)
-        .map((link) => ({
-          kind: link.kind,
-          targetId: link.targetId,
-          href: link.href,
-          title: link.title,
-          badge: link.badge,
-          meta: link.meta,
-          reason: link.reason,
-        })),
+      path: buildLessonPath(lesson.id),
+      phaseSlug: lesson.phaseSlug,
+      phaseTitle: lesson.phaseTitle,
+      phaseAudience: lesson.phaseAudience,
+      phaseDescription: lesson.phaseDescription,
+      phaseOrder: lesson.phaseOrder,
+      orderInPhase: lesson.orderInPhase,
+      resourceLinks: ensureLessonHasPracticeLink(
+        lesson.id,
+        lesson.resourceLinks
+          .sort((left, right) => left.position - right.position)
+          .map((link) => ({
+            kind: link.kind,
+            targetId: link.targetId,
+            href: link.href,
+            title: link.title,
+            badge: link.badge,
+            meta: link.meta,
+            reason: link.reason,
+          })),
+      ),
     };
 
     if (!existing) {
@@ -227,6 +256,23 @@ export async function listLearningPhases(): Promise<LessonPhaseWithResourceLinks
   }
 
   return buildLearningPhasesFromDb(lessons);
+}
+
+export async function listLearningLessons(): Promise<LessonWithResourceLinks[]> {
+  const phases = await listLearningPhases();
+
+  return phases.flatMap((phase) => phase.lessons).sort(
+    (left, right) =>
+      left.phaseOrder - right.phaseOrder || left.orderInPhase - right.orderInPhase,
+  );
+}
+
+export async function getLearningLessonContent(
+  lessonId: string,
+): Promise<LessonWithResourceLinks | undefined> {
+  const lessons = await listLearningLessons();
+
+  return lessons.find((lesson) => lesson.id === lessonId);
 }
 
 export async function listPracticeTasksContent(): Promise<WorkspaceTask[]> {

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { listLearningPhases } from "@/lib/content-store";
+import { hasDetailedLessonArticle } from "@/lib/lesson-content";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +18,10 @@ export default async function LearningPage() {
         <p className="mt-5 max-w-3xl text-lg leading-8 text-[var(--muted)]">
           A közös alapozás után a rendszer csak ott válik két ágra, ahol a közép
           és emelt valóban más gondolkodási mintát igényel. A cél nem a feladatok
-          bemagolása, hanem a típusfeladatok biztos felismerése és megoldása. A főbb
-          leckék alján már közvetlen belépési pontok vannak a kapcsolódó interaktív
-          gyakorló- és archív workspace-ekhez.
+          bemagolása, hanem a típusfeladatok biztos felismerése és megoldása. A leckék
+          most már külön oldalakon nyílnak meg magyarázatokkal, ellenőrzőpontokkal és
+          példakódokkal, alul pedig ugyanúgy ott vannak a kapcsolódó interaktív
+          gyakorló- és archív workspace-ek.
         </p>
       </section>
 
@@ -50,17 +52,33 @@ export default async function LearningPage() {
                   >
                     <div className="flex items-center justify-between gap-3">
                       <span className="chip">{lesson.id}</span>
-                      <span className="text-sm text-[var(--muted)]">{phase.title}</span>
+                      <span className="text-sm text-[var(--muted)]">
+                        {hasDetailedLessonArticle(lesson.id)
+                          ? "Kidolgozott lecke"
+                          : "Leckeoldal"}
+                      </span>
                     </div>
-                    <h3 className="mt-4 text-xl font-semibold tracking-tight">
+                    <Link
+                      className="mt-4 block text-xl font-semibold tracking-tight underline-offset-4 hover:underline"
+                      href={lesson.path}
+                    >
                       {lesson.title}
-                    </h3>
+                    </Link>
                     <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
                       {lesson.summary}
                     </p>
                     <p className="background-soft mt-4 rounded-2xl px-4 py-3 text-sm leading-6 text-[var(--foreground)]">
                       <span className="font-semibold">Vizsgaérték:</span> {lesson.examValue}
                     </p>
+
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <Link className="secondary-link text-sm" href={lesson.path}>
+                        Teljes lecke megnyitása
+                      </Link>
+                      <span className="rounded-full border border-[var(--line)] px-3 py-2 text-xs uppercase tracking-[0.22em] text-[var(--muted)]">
+                        {phase.title}
+                      </span>
+                    </div>
 
                     {relatedLinks.length ? (
                       <div className="mt-5 border-t border-[var(--line)] pt-5">

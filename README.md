@@ -1,17 +1,18 @@
 # Kódérettségi
 
-Magyar nyelvű, dockerizált felkészítő platform a digitális kultúra érettségi Python programozási részéhez. A cél egy olyan tanulási rendszer, amely 0 tudástól indulva készít fel közép- és emelt szinten, saját feladatbankkal, vizsgaarchívummal, későbbi determinisztikus javítással és AI-alapú visszajelzéssel.
+Magyar nyelvű, dockerizált felkészítő platform a digitális kultúra érettségi Python programozási részéhez. A cél egy olyan tanulási rendszer, amely 0 tudástól indulva készít fel közép- és emelt szinten, saját feladatbankkal, vizsgaarchívummal, determinisztikus javítással és opcionális OpenAI-alapú review-val.
 
 ## Jelenlegi állapot
 
 - Next.js App Router alapoldalak magyar nyelvű kezdőlappal és külön szekciókkal
 - részletes lesson map v1 strukturált adatmodellben
-- első interaktív gyakorlófeladatok beépített task workspace-szel és oldalsó kódszerkesztővel
+- 50 közép + 50 emelt saját interaktív gyakorlófeladat, valamint 10-10 közép és emelt próbaérettségi pack
 - vizsgaarchívum szemléleti alapok a korábbi évek feladattípusaihoz
 - Docker Compose alap a web, judge, PostgreSQL és Redis szolgáltatásokhoz
 - külön Python judge service szigorított vizsgamódú AST-ellenőrzéssel és processzlimitekkel
 - a judge konténer hard capje 1 CPU-mag, 2 GB RAM és 5 GB írható sandbox-terület, túllépéskor a futás megszakad és a felület visszajelzi az okot
 - valódi light és dark mode váltó a felületen
+- opcionális OpenAI review a legutóbbi judge-olt submissionhöz, böngészőnként 20 kéréses cookie-kerettel
 
 ## Technológiai irány
 
@@ -59,6 +60,24 @@ npm run dev
 
 A webes felület külön is elindul, de az interaktív futtatás és beküldés csak akkor működik, ha a judge service is fut. Ehhez a legegyszerűbb a dockeres judge használata, vagy a `JUDGE_API_URL` beállítása egy elérhető judge példányra.
 
+## OpenAI review bekapcsolása
+
+Az AI review alapból opcionális. Ha nincs `OPENAI_API_KEY`, a felület buildel és fut tovább, csak az AI review panel tiltott állapotban marad.
+
+Szükséges env változók:
+
+```bash
+OPENAI_API_KEY=...
+OPENAI_REVIEW_MODEL=gpt-5.4
+```
+
+Jellemzők:
+
+- az AI review csak már judge-olt kódhoz kérhető
+- a review a legutóbbi futtatott vagy beküldött kódváltozatot elemzi, nem a még el nem futtatott editorállapotot
+- a keret böngészőnként 20 kérés, szerveroldali HTTP-only cookie-ban tárolva
+- a deterministic judge pontszám marad az elsődleges igazságforrás, az AI review ehhez ad magyar nyelvű összképet, tippeket és egy külön AI pontszámot
+
 ## Ellenőrzés
 
 ```bash
@@ -96,4 +115,4 @@ npm run db:studio
 2. Profilok, auth és submission persistence bekötése a most létrehozott sémára.
 3. A pontozott beküldés szerveroldali mentése submission és submission-result rekordokba.
 4. Lesson-progress számolás szerveroldalon, nem csak localStorage-ból.
-5. Későbbi AI feedback adapter bevezetése a submission pipeline mellé.
+5. Auth és valódi user-szintű quota/persistencia ráhúzása a mostani böngésző-cookie alapú AI review-ra.

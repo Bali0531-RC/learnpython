@@ -2,14 +2,23 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import type {
+  AiReviewQuota,
+  AiReviewResult,
+  AiReviewRouteResponse,
+  AiReviewVerdictInput,
+} from "@/lib/ai-review-types";
 import type { WorkspaceTask } from "@/lib/task-types";
 import {
+  appendTaskAiReview,
   appendWorkspaceHistory,
   clearTaskDraft,
   formatLocalTimestamp,
+  listTaskAiReviews,
   listTaskHistory,
   loadTaskDraft,
   saveTaskDraft,
+  type StoredAiReviewRecord,
   type StoredVerdictRecord,
 } from "@/lib/workspace-storage";
 
@@ -51,6 +60,62 @@ type SubmissionResponse = {
   error?: string;
 };
 
+function toAiReviewInput(verdict: SubmissionResponse): AiReviewVerdictInput {
+  return {
+    mode: verdict.mode,
+    suite: verdict.suite,
+    outputVisibility: verdict.outputVisibility,
+    score: verdict.result.score,
+    passed: verdict.result.passed,
+    total: verdict.result.total,
+    blocked: Boolean(verdict.result.blocked),
+    blockReason: verdict.result.block_reason ?? null,
+    resourceExceeded: verdict.result.resource_exceeded ?? false,
+    resourceMessage: verdict.result.resource_message ?? null,
+    terminatedEarly: verdict.result.terminated_early ?? false,
+    results: verdict.result.results.map((result) => ({
+      label: result.label,
+      passed: result.passed,
+      expectedOutput: verdict.outputVisibility === "full" ? result.expected_output : undefined,
+      actualOutput: verdict.outputVisibility === "full" ? result.actual_output : undefined,
+      stderr: result.stderr,
+      timedOut: result.timed_out,
+      resourceExceeded: result.resource_exceeded ?? false,
+      resourceMessage: result.resource_message ?? null,
+    })),
+  };
+}
+
+function toStoredAiReviewRecord(options: {
+  task: WorkspaceTask;
+  taskPath: string;
+  review: AiReviewResult;
+}): StoredAiReviewRecord {
+  const { review, task, taskPath } = options;
+
+  return {
+    id: crypto.randomUUID(),
+    taskId: task.id,
+    taskPath,
+    taskTitle: task.title,
+    track: task.track,
+    level: task.level,
+    family: task.family,
+    sourceKind: task.source.kind,
+    mode: review.basedOn.mode,
+    suite: review.basedOn.suite,
+    reviewScore: review.score,
+    judgeScore: review.basedOn.judgeScore,
+    summary: review.summary,
+    strengths: review.strengths,
+    findings: review.findings,
+    tips: review.tips,
+    nextStep: review.nextStep,
+    improvedExample: review.improvedExample,
+    createdAt: review.createdAt,
+  };
+}
+
 export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
   const [code, setCode] = useState(task.starterCode);
   const [verdict, setVerdict] = useState<SubmissionResponse | null>(null);
@@ -59,6 +124,14 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
   const [isPending, setIsPending] = useState(false);
   const [draftUpdatedAt, setDraftUpdatedAt] = useState<string | null>(null);
   const [history, setHistory] = useState<StoredVerdictRecord[]>([]);
+  const [aiReviewHistory, setAiReviewHistory] = useState<StoredAiReviewRecord[]>([]);
+  const [aiReview, setAiReview] = useState<AiReviewResult | null>(null);
+  const [aiReviewError, setAiReviewError] = useState<string | null>(null);
+  const [aiReviewQuota, setAiReviewQuota] = useState<AiReviewQuota | null>(null);
+  const [aiReviewAvailable, setAiReviewAvailable] = useState(false);
+  const [aiReviewAvailabilityMessage, setAiReviewAvailabilityMessage] = useState<string | null>(null);
+  const [isAiReviewPending, setIsAiReviewPending] = useState(false);
+  const [lastJudgedCode, setLastJudgedCode] = useState<string | null>(null);
   const [storageReady, setStorageReady] = useState(false);
   const [hasEditedDraft, setHasEditedDraft] = useState(false);
 
@@ -71,6 +144,16 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
         : `/gyakorlas/${task.id}`,
     [task.id, task.source.kind],
   );
+  const codeDiffersFromLastVerdict = Boolean(
+    verdict && lastJudgedCode !== null && code !== lastJudgedCode,
+  );
+  const canRequestAiReview =
+    Boolean(verdict) &&
+    Boolean(lastJudgedCode?.trim()) &&
+    aiReviewAvailable &&
+    !isPending &&
+    !isAiReviewPending &&
+    (aiReviewQuota?.remaining ?? 1) > 0;
 
   useEffect(() => {
     const storedDraft = loadTaskDraft(task.id);
@@ -78,12 +161,58 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
     setCode(storedDraft?.code ?? task.starterCode);
     setDraftUpdatedAt(storedDraft?.updatedAt ?? null);
     setHistory(listTaskHistory(task.id).slice(0, 6));
+    setAiReviewHistory(listTaskAiReviews(task.id).slice(0, 4));
+    setAiReview(null);
+    setAiReviewError(null);
+    setAiReviewQuota(null);
+    setAiReviewAvailable(false);
+    setAiReviewAvailabilityMessage(null);
+    setIsAiReviewPending(false);
+    setLastJudgedCode(null);
     setVerdict(null);
     setRequestError(null);
     setActiveMode(null);
     setHasEditedDraft(false);
     setStorageReady(true);
   }, [task.id, task.starterCode]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadAiReviewStatus() {
+      try {
+        const response = await fetch("/api/ai-review", {
+          method: "GET",
+          cache: "no-store",
+        });
+        const data = (await response.json()) as AiReviewRouteResponse;
+
+        if (isCancelled) {
+          return;
+        }
+
+        setAiReviewAvailable(Boolean(data.available));
+        setAiReviewQuota(data.quota ?? null);
+        setAiReviewAvailabilityMessage(data.available ? null : data.error ?? null);
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+
+        setAiReviewAvailable(false);
+        setAiReviewQuota(null);
+        setAiReviewAvailabilityMessage(
+          "Az AI review állapota most nem olvasható ki a szerverről.",
+        );
+      }
+    }
+
+    void loadAiReviewStatus();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [task.id]);
 
   useEffect(() => {
     if (!storageReady || !hasEditedDraft) {
@@ -149,6 +278,7 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
     setIsPending(true);
     setActiveMode(mode);
     setRequestError(null);
+    setAiReviewError(null);
 
     try {
       const response = await fetch("/api/submit", {
@@ -171,6 +301,8 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
       }
 
       setVerdict(data);
+      setLastJudgedCode(code);
+      setAiReview(null);
       setHistory(
         appendWorkspaceHistory({
           id: crypto.randomUUID(),
@@ -202,6 +334,64 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
       );
     } finally {
       setIsPending(false);
+    }
+  }
+
+  async function handleAiReview() {
+    if (!verdict || !lastJudgedCode?.trim()) {
+      setAiReviewError(
+        "AI review csak már lefuttatott vagy beküldött kódhoz kérhető. Előbb indíts egy judge futást.",
+      );
+      return;
+    }
+
+    setIsAiReviewPending(true);
+    setAiReviewError(null);
+
+    try {
+      const response = await fetch("/api/ai-review", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          taskId: task.id,
+          code: lastJudgedCode,
+          verdict: toAiReviewInput(verdict),
+        }),
+      });
+
+      const data = (await response.json()) as AiReviewRouteResponse;
+
+      setAiReviewAvailable(Boolean(data.available));
+      setAiReviewQuota(data.quota ?? null);
+      setAiReviewAvailabilityMessage(data.available ? null : data.error ?? null);
+
+      if (!response.ok || !data.ok || !data.review) {
+        throw new Error(data.error ?? "Az AI review nem adott használható választ.");
+      }
+
+      setAiReview(data.review);
+      setAiReviewHistory(
+        appendTaskAiReview(
+          toStoredAiReviewRecord({
+            task,
+            taskPath,
+            review: data.review,
+          }),
+        )
+          .filter((entry) => entry.taskId === task.id)
+          .slice(0, 4),
+      );
+    } catch (error) {
+      setAiReviewError(
+        error instanceof Error
+          ? error.message
+          : "Ismeretlen hiba történt az AI review kérésekor.",
+      );
+    } finally {
+      setIsAiReviewPending(false);
     }
   }
 
@@ -405,14 +595,16 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
             Ha még teljesen kezdő vagy, nyugodtan töröld a teljes vázlatot, és írd meg a megoldást a saját stílusodban. A starter csak támpont, nem kötelező sablon.
           </p>
           <div className="flex flex-wrap gap-3">
-            <button
-              className="secondary-link cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={code === task.starterCode && !draftUpdatedAt}
-              type="button"
-              onClick={handleResetDraft}
-            >
-              Alap vázlat visszaállítása
-            </button>
+            {storageReady ? (
+              <button
+                className="secondary-link cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={code === task.starterCode && !draftUpdatedAt}
+                type="button"
+                onClick={handleResetDraft}
+              >
+                Alap vázlat visszaállítása
+              </button>
+            ) : null}
             <button
               className="secondary-link cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
               disabled={isPending}
@@ -438,7 +630,7 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
           <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
             <p className="eyebrow">Piszkozatállapot</p>
             <p className="mt-4 text-sm leading-6 text-[var(--muted)]">
-              {draftUpdatedAt
+              {storageReady && draftUpdatedAt
                 ? `Utolsó automatikus mentés: ${formatLocalTimestamp(draftUpdatedAt)}.`
                 : "A kód módosítás után automatikusan helyben mentődik ebben a böngészőben."}
             </p>
@@ -631,6 +823,210 @@ export function TaskWorkspace({ task }: { task: WorkspaceTask }) {
             </div>
           </div>
         ) : null}
+      </section>
+
+      <section className="section-card p-7 sm:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="eyebrow">AI review</p>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+              OpenAI kódreview a submissionhöz
+            </h2>
+          </div>
+          {aiReviewQuota ? (
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-sm text-[var(--muted)]">
+              {aiReviewQuota.remaining}/{aiReviewQuota.limit} maradt
+            </span>
+          ) : null}
+        </div>
+
+        <div className="mt-6 space-y-4">
+          <div className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+            <p className="text-sm leading-6 text-[var(--muted)]">
+              Az AI review az utolsó judge-olt kódváltozatot és a legutóbbi verdictet elemzi magyar nyelvű visszajelzéssel. A szerveroldali keret böngészőnként legfeljebb 20 kérés.
+            </p>
+            {codeDiffersFromLastVerdict ? (
+              <p className="mt-4 rounded-2xl border border-[#d97706]/30 bg-[#d97706]/10 px-4 py-3 text-sm leading-6 text-[#8a4b06] dark:text-[#ffd7aa]">
+                Az editor tartalma már eltér az utolsó futtatott verziótól. Az AI review most még a legutóbbi judge-olt kódot értékeli. Ha az új módosításokra is szeretnél review-t, futtasd újra a megoldást.
+              </p>
+            ) : null}
+            {!verdict ? (
+              <p className="mt-4 text-sm leading-6 text-[var(--muted)]">
+                Előbb futtasd vagy küldd be a megoldást, hogy legyen judge eredmény, amihez az AI reviewer igazodni tud.
+              </p>
+            ) : null}
+            {!aiReviewAvailable ? (
+              <p className="mt-4 rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm leading-6 text-[var(--muted)]">
+                {aiReviewAvailabilityMessage ??
+                  "Az AI review jelenleg nincs teljesen bekötve ezen a környezeten."}
+              </p>
+            ) : null}
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                className="primary-link cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!canRequestAiReview}
+                type="button"
+                onClick={handleAiReview}
+              >
+                {isAiReviewPending ? "AI review készül..." : "AI review kérése"}
+              </button>
+              {verdict ? (
+                <span className="rounded-full border border-[var(--line)] px-4 py-2 text-sm text-[var(--muted)]">
+                  Judge: {verdict.result.score}% · {verdict.suite === "hidden" ? "rejtett suite" : "publikus suite"}
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          {aiReviewError ? (
+            <div className="rounded-3xl border border-[#c54d2f]/30 bg-[#c54d2f]/10 px-5 py-4 text-sm leading-6 text-[#7d2616] dark:text-[#ffc7bc]">
+              {aiReviewError}
+            </div>
+          ) : null}
+
+          {aiReview ? (
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--muted)]">
+                    AI pontszám
+                  </p>
+                  <p className="mt-3 text-3xl font-semibold tracking-tight text-[var(--accent)]">
+                    {aiReview.score}/100
+                  </p>
+                </article>
+                <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--muted)]">
+                    Judge alap
+                  </p>
+                  <p className="mt-3 text-3xl font-semibold tracking-tight">
+                    {aiReview.basedOn.judgeScore}%
+                  </p>
+                </article>
+                <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--muted)]">
+                    Review ideje
+                  </p>
+                  <p className="mt-3 text-lg font-semibold tracking-tight">
+                    {formatLocalTimestamp(aiReview.createdAt)}
+                  </p>
+                </article>
+              </div>
+
+              <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+                <p className="eyebrow">Összkép</p>
+                <p className="mt-3 text-base leading-7 text-[var(--foreground)]">
+                  {aiReview.summary}
+                </p>
+                <p className="mt-4 text-sm leading-6 text-[var(--muted)]">
+                  Modell: {aiReview.model}
+                  {aiReview.requestId ? ` · request id: ${aiReview.requestId}` : ""}
+                </p>
+              </article>
+
+              <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+                <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+                  <p className="eyebrow">Erősségek</p>
+                  <ul className="mt-4 space-y-3 text-sm leading-6 text-[var(--foreground)]">
+                    {aiReview.strengths.map((strength) => (
+                      <li key={strength} className="flex gap-3">
+                        <span className="mt-1 h-2 w-2 rounded-full bg-emerald-500" />
+                        <span>{strength}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+
+                <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+                  <p className="eyebrow">Kockázatok</p>
+                  <div className="mt-4 space-y-3">
+                    {aiReview.findings.map((finding) => (
+                      <div
+                        key={`${finding.severity}-${finding.title}`}
+                        className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="font-semibold tracking-tight">{finding.title}</p>
+                          <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs uppercase tracking-[0.22em] text-[var(--muted)]">
+                            {finding.severity}
+                          </span>
+                        </div>
+                        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                          {finding.detail}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+                <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+                  <p className="eyebrow">Tippek</p>
+                  <ul className="mt-4 space-y-3 text-sm leading-6 text-[var(--foreground)]">
+                    {aiReview.tips.map((tip) => (
+                      <li key={tip} className="flex gap-3">
+                        <span className="mt-1 h-2 w-2 rounded-full bg-[var(--accent)]" />
+                        <span>{tip}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+
+                <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+                  <p className="eyebrow">Következő lépés</p>
+                  <p className="mt-4 text-sm leading-6 text-[var(--foreground)]">
+                    {aiReview.nextStep}
+                  </p>
+                </article>
+              </div>
+
+              {aiReview.improvedExample ? (
+                <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+                  <p className="eyebrow">Javított példa</p>
+                  {aiReview.improvedExample.explanation ? (
+                    <p className="mt-4 text-sm leading-6 text-[var(--muted)]">
+                      {aiReview.improvedExample.explanation}
+                    </p>
+                  ) : null}
+                  <pre className="mt-4 overflow-x-auto rounded-[1.3rem] bg-[#111827] p-4 text-sm leading-6 text-[#f8fafc]">
+                    <code>{aiReview.improvedExample.code}</code>
+                  </pre>
+                </article>
+              ) : null}
+            </div>
+          ) : null}
+
+          <article className="rounded-3xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+            <p className="eyebrow">Korábbi AI review-k</p>
+            {aiReviewHistory.length ? (
+              <div className="mt-4 space-y-3">
+                {aiReviewHistory.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="rounded-[1.4rem] border border-[var(--line)] bg-[var(--surface)] p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="font-semibold tracking-tight">
+                        {entry.reviewScore}/100 AI · {entry.judgeScore}% judge
+                      </p>
+                      <span className="text-xs uppercase tracking-[0.22em] text-[var(--muted)]">
+                        {formatLocalTimestamp(entry.createdAt)}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                      {entry.summary}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-4 text-sm leading-6 text-[var(--muted)]">
+                Ennél a feladatnál még nem készült helyben eltárolt AI review.
+              </p>
+            )}
+          </article>
+        </div>
       </section>
     </div>
   );
