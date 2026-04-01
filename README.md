@@ -30,6 +30,8 @@ cp .env.example .env
 npm run docker:up
 ```
 
+A compose-os `web` indulás fejlesztői környezetben automatikusan lefuttatja a `prisma db push` és `prisma db seed` lépéseket is, így a PostgreSQL konténer nem marad üres sémával.
+
 Ez elindítja a következő szolgáltatásokat:
 
 - `web` a Next.js alkalmazáshoz a `http://localhost:3000` címen
@@ -101,6 +103,8 @@ npm run db:generate
 npm run db:push
 npm run db:seed
 ```
+
+Ha csak Docker Compose-ot használsz, ezt a bootstrapet a `web` szolgáltatás induláskor elvégzi helyetted. Docker nélküli futtatásnál továbbra is külön le kell futtatni.
 
 Hasznos további parancsok:
 

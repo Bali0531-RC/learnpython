@@ -17,33 +17,114 @@ const nodeRequire = createRequire(`${process.cwd()}/package.json`);
 
 export const AI_REVIEW_COOKIE_NAME = "kodrettsegi-ai-review-count-v1";
 
-const DEFAULT_REVIEW_MODEL = "gpt-5.4";
+const DEFAULT_REVIEW_MODEL = "gpt-5-nano";
+const AI_REVIEW_REQUEST_TIMEOUT_MS = 18_000;
+const AI_REVIEW_MAX_COMPLETION_TOKENS = 900;
 const MAX_CODE_CHARS = 12_000;
 const MAX_TEXT_CHARS = 3_000;
+const AI_REVIEW_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    score: { type: "number" },
+    summary: { type: "string" },
+    strengths: {
+      type: "array",
+      items: { type: "string" },
+    },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          severity: {
+            type: "string",
+            enum: ["low", "medium", "high"],
+          },
+          detail: { type: "string" },
+        },
+        required: ["title", "severity", "detail"],
+      },
+    },
+    tips: {
+      type: "array",
+      items: { type: "string" },
+    },
+    nextStep: { type: "string" },
+    improvedExample: {
+      anyOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            code: { type: "string" },
+            explanation: {
+              anyOf: [{ type: "string" }, { type: "null" }],
+            },
+          },
+          required: ["code", "explanation"],
+        },
+        {
+          type: "null",
+        },
+      ],
+    },
+  },
+  required: [
+    "score",
+    "summary",
+    "strengths",
+    "findings",
+    "tips",
+    "nextStep",
+    "improvedExample",
+  ],
+} as const;
 
 type GeneratedAiReview = Omit<AiReviewResult, "createdAt" | "model" | "requestId" | "basedOn">;
-type OpenAIMessage = {
-  role: "developer" | "user";
-  content: string;
-};
-type OpenAICompletion = {
+type OpenAIResponse = {
+  id?: string;
   model: string;
-  choices: Array<{
-    message?: {
-      content?: unknown;
-    };
+  output_text?: string;
+  output?: Array<{
+    content?: Array<{
+      type?: string;
+      text?: string;
+      refusal?: string;
+    }>;
   }>;
+  error?: {
+    message?: string | null;
+  } | null;
+  incomplete_details?: {
+    reason?: string | null;
+  } | null;
   _request_id?: string | null;
 };
 type OpenAIClient = {
-  chat: {
-    completions: {
-      create(options: {
-        model: string;
-        temperature: number;
-        messages: OpenAIMessage[];
-      }): Promise<OpenAICompletion>;
-    };
+  responses: {
+    create(options: {
+      model: string;
+      instructions: string;
+      input: string;
+      max_output_tokens?: number;
+      reasoning?: {
+        effort: "minimal" | "low" | "medium" | "high";
+      };
+      text?: {
+        format?: {
+          type: "json_object";
+        } | {
+          type: "json_schema";
+          name: string;
+          schema: Record<string, unknown>;
+          strict?: boolean;
+        };
+        verbosity?: "low" | "medium" | "high";
+      };
+    }): Promise<OpenAIResponse>;
   };
 };
 type OpenAIConstructor = new (options: {
@@ -154,8 +235,8 @@ function createOpenAIClient() {
 
   return new OpenAI({
     apiKey,
-    maxRetries: 1,
-    timeout: 30_000,
+    maxRetries: 0,
+    timeout: AI_REVIEW_REQUEST_TIMEOUT_MS,
   });
 }
 
@@ -163,33 +244,41 @@ function getModelName() {
   return process.env.OPENAI_REVIEW_MODEL?.trim() || DEFAULT_REVIEW_MODEL;
 }
 
-function readCompletionText(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
+function readResponseText(response: OpenAIResponse): string {
+  if (typeof response.output_text === "string" && response.output_text.trim()) {
+    return response.output_text.trim();
   }
 
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === "string") {
-          return part;
-        }
+  const outputText = response.output
+    ?.flatMap((item) => item.content ?? [])
+    .filter((part) => part?.type === "output_text" && typeof part.text === "string")
+    .map((part) => part.text?.trim() ?? "")
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 
-        if (
-          part &&
-          typeof part === "object" &&
-          "type" in part &&
-          (part as { type?: string }).type === "text" &&
-          "text" in part &&
-          typeof (part as { text?: string }).text === "string"
-        ) {
-          return (part as { text: string }).text;
-        }
+  if (outputText) {
+    return outputText;
+  }
 
-        return "";
-      })
-      .join("\n")
-      .trim();
+  const refusal = response.output
+    ?.flatMap((item) => item.content ?? [])
+    .find((part) => part?.type === "refusal" && typeof part.refusal === "string")
+    ?.refusal
+    ?.trim();
+
+  if (refusal) {
+    throw new Error(`Az AI review modelltől visszautasítás érkezett: ${refusal}`);
+  }
+
+  if (response.error?.message?.trim()) {
+    throw new Error(response.error.message.trim());
+  }
+
+  if (response.incomplete_details?.reason?.trim()) {
+    throw new Error(
+      `Az AI review válasz nem lett teljes. Ok: ${response.incomplete_details.reason.trim()}.`,
+    );
   }
 
   return "";
@@ -399,20 +488,21 @@ function normalizeReviewPayload(
   };
 }
 
-function buildReviewMessages(
+function buildReviewRequest(
   task: WorkspaceTask,
   code: string,
   verdict: AiReviewVerdictInput,
-): OpenAIMessage[] {
-  const developerMessage = [
+): { instructions: string; input: string } {
+  const instructions = [
     "Te egy magyar nyelven válaszoló, SZIGORÚ Python érettségi kódreviewer vagy.",
     "A célod rövid, használható, vizsgafókuszú, kritikusan kalibrált visszajelzés adása a beküldött megoldásról.",
     "Mindig magyarul válaszolj.",
     "Kizárólag egyetlen JSON objektumot adj vissza, magyarázó szöveg vagy markdown nélkül.",
     'A JSON kötelező mezői ezek legyenek: {"score": number, "summary": string, "strengths": string[], "findings": [{"title": string, "severity": "low"|"medium"|"high", "detail": string}], "tips": string[], "nextStep": string}.',
     'Opcionálisan adhatsz még egy improvedExample mezőt is ebben a formában: {"code": string, "explanation": string}.',
-    "Az improvedExample nem kötelező. Csak akkor add meg, ha valóban tudsz rövid, javított, vizsgastílusú Python példát mutatni ugyanarra a feladatra.",
-    "Ha adsz improvedExample mezőt, a code legyen önmagában is hasznos és a feladat input/output modelljéhez illeszkedő példa.",
+    "Az improvedExample mező mindig szerepeljen a JSON-ban.",
+    "Ha nincs valóban hasznos javított példád, az improvedExample legyen null.",
+    "Ha adsz improvedExample objektumot, a code legyen önmagában is hasznos és a feladat input/output modelljéhez illeszkedő példa, az explanation pedig lehet rovid szoveg vagy null.",
 
     "A deterministic judge eredményét kezeld elsődleges igazságforrásként.",
     "Ha a judge részben vagy teljesen bukik, a score maradjon egyértelműen közepes vagy alacsony.",
@@ -464,16 +554,10 @@ function buildReviewMessages(
     code: truncateText(code, MAX_CODE_CHARS),
   };
 
-  return [
-    {
-      role: "developer" as const,
-      content: developerMessage,
-    },
-    {
-      role: "user" as const,
-      content: JSON.stringify(userPayload, null, 2),
-    },
-  ];
+  return {
+    instructions,
+    input: `Valaszolj json objektummal az alabbi review-adatok alapjan.\n\n${JSON.stringify(userPayload, null, 2)}`,
+  };
 }
 
 export function isAiReviewAvailable() {
@@ -530,13 +614,28 @@ export async function generateAiReview(options: {
     throw new Error(getAiReviewUnavailableReason() ?? "Az OpenAI kliens nem érhető el.");
   }
 
-  const completion = await client.chat.completions.create({
+  const request = buildReviewRequest(options.task, options.code, options.verdict);
+
+  const response = await client.responses.create({
     model: getModelName(),
-    temperature: 1,
-    messages: buildReviewMessages(options.task, options.code, options.verdict),
+    instructions: request.instructions,
+    input: request.input,
+    max_output_tokens: AI_REVIEW_MAX_COMPLETION_TOKENS,
+    reasoning: {
+      effort: "minimal",
+    },
+    text: {
+      format: {
+        type: "json_schema",
+        name: "ai_review_result",
+        schema: AI_REVIEW_RESPONSE_SCHEMA,
+        strict: true,
+      },
+      verbosity: "low",
+    },
   });
 
-  const rawContent = readCompletionText(completion.choices[0]?.message?.content);
+  const rawContent = readResponseText(response);
   const rawJson = extractJsonObject(rawContent);
   const parsed = JSON.parse(rawJson) as unknown;
   const normalized = normalizeReviewPayload(parsed, options.verdict);
@@ -544,8 +643,8 @@ export async function generateAiReview(options: {
   return {
     ...normalized,
     createdAt: new Date().toISOString(),
-    model: completion.model,
-    requestId: completion._request_id ?? null,
+    model: response.model,
+    requestId: response._request_id ?? response.id ?? null,
     basedOn: {
       judgeScore: options.verdict.score,
       passed: options.verdict.passed,

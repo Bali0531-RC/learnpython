@@ -1,6 +1,6 @@
 import "server-only";
 
-import { db } from "./db";
+import { db, runWithDatabaseFallback } from "./db";
 
 type StoredJudgeResultRow = {
   label: string;
@@ -34,10 +34,6 @@ type PersistSubmissionInput = {
   result: StoredJudgeEvaluation;
 };
 
-function hasDatabaseUrl() {
-  return Boolean(process.env.DATABASE_URL);
-}
-
 export async function persistSubmissionIfPossible({
   taskId,
   mode,
@@ -45,25 +41,23 @@ export async function persistSubmissionIfPossible({
   outputVisibility,
   result,
 }: PersistSubmissionInput) {
-  if (!hasDatabaseUrl()) {
-    return;
-  }
-
-  try {
-    const task = await db.task.findUnique({
+  const task = await runWithDatabaseFallback(() =>
+    db.task.findUnique({
       where: {
         id: taskId,
       },
       select: {
         id: true,
       },
-    });
+    }),
+  );
 
-    if (!task) {
-      return;
-    }
+  if (!task) {
+    return;
+  }
 
-    await db.submission.create({
+  await runWithDatabaseFallback(() =>
+    db.submission.create({
       data: {
         taskId,
         mode,
@@ -92,8 +86,6 @@ export async function persistSubmissionIfPossible({
           })),
         },
       },
-    });
-  } catch {
-    return;
-  }
+    }),
+  );
 }

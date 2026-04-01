@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: npm run dev -- --hostname 0.0.0.0
+    command: sh -c "npm run db:push && npm run db:seed && npm run dev -- --hostname 0.0.0.0"
     depends_on:
       db:
         condition: service_healthy

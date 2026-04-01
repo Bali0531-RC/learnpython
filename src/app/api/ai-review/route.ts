@@ -20,6 +20,20 @@ function jsonResponse(body: AiReviewRouteResponse, status = 200) {
   return Response.json(body, { status });
 }
 
+function formatAiReviewError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Ismeretlen AI review hiba történt.";
+
+  if (message.toLowerCase().includes("timed out")) {
+    return process.env.NODE_ENV === "development"
+      ? "Az AI review szolgáltatás nem válaszolt időben a szerveroldali időkorláton belül."
+      : "Az AI review szolgáltatás most nem válaszolt időben. Próbáld meg újra kicsit később.";
+  }
+
+  return process.env.NODE_ENV === "development"
+    ? `Az AI review hívás meghiúsult: ${message}`
+    : "Az AI review kérés most nem futott le. Próbáld meg újra később.";
+}
+
 function normalizeVerdict(verdict: unknown): AiReviewVerdictInput | null {
   if (!verdict || typeof verdict !== "object") {
     return null;
@@ -189,18 +203,13 @@ export async function POST(request: Request) {
       review,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Ismeretlen AI review hiba történt.";
-
     return jsonResponse(
       {
         ok: false,
         available,
         quota,
         model: getAiReviewModel(),
-        error:
-          process.env.NODE_ENV === "development"
-            ? `Az AI review hívás meghiúsult: ${message}`
-            : "Az AI review kérés most nem futott le. Próbáld meg újra később.",
+        error: formatAiReviewError(error),
       },
       502,
     );

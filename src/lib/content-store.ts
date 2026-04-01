@@ -3,7 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { getArchiveTaskById } from "./archive-tasks";
-import { db } from "./db";
+import { db, runWithDatabaseFallback } from "./db";
 import {
   ensureLessonHasPracticeLink,
   getResolvedLessonTaskLinks,
@@ -57,22 +57,6 @@ type LessonRecord = Prisma.LessonGetPayload<{
 
 const practiceOrder = new Map(practiceTasks.map((task, index) => [task.id, index]));
 const archiveOrder = new Map(archiveEntries.map((entry, index) => [entry.id, index]));
-
-function hasDatabaseUrl() {
-  return Boolean(process.env.DATABASE_URL);
-}
-
-async function withDatabaseFallback<T>(query: () => Promise<T>): Promise<T | null> {
-  if (!hasDatabaseUrl()) {
-    return null;
-  }
-
-  try {
-    return await query();
-  } catch {
-    return null;
-  }
-}
 
 function byStaticOrder<T extends { id: string }>(
   items: T[],
@@ -242,7 +226,7 @@ function buildLearningPhasesFromDb(lessons: LessonRecord[]): LessonPhaseWithReso
 }
 
 export async function listLearningPhases(): Promise<LessonPhaseWithResourceLinks[]> {
-  const lessons = await withDatabaseFallback(() =>
+  const lessons = await runWithDatabaseFallback(() =>
     db.lesson.findMany({
       include: {
         resourceLinks: true,
@@ -276,7 +260,7 @@ export async function getLearningLessonContent(
 }
 
 export async function listPracticeTasksContent(): Promise<WorkspaceTask[]> {
-  const tasks = await withDatabaseFallback(() =>
+  const tasks = await runWithDatabaseFallback(() =>
     db.task.findMany({
       where: {
         sourceKind: "platform_authored",
@@ -298,7 +282,7 @@ export async function listPracticeTasksContent(): Promise<WorkspaceTask[]> {
 export async function getPracticeTaskContent(
   taskId: string,
 ): Promise<WorkspaceTask | undefined> {
-  const task = await withDatabaseFallback(() =>
+  const task = await runWithDatabaseFallback(() =>
     db.task.findFirst({
       where: {
         id: taskId,
@@ -317,7 +301,7 @@ export async function getPracticeTaskContent(
 export async function getWorkspaceTaskContent(
   taskId: string,
 ): Promise<WorkspaceTask | undefined> {
-  const task = await withDatabaseFallback(() =>
+  const task = await runWithDatabaseFallback(() =>
     db.task.findUnique({
       where: {
         id: taskId,
@@ -337,7 +321,7 @@ export async function getWorkspaceTaskContent(
 }
 
 export async function listArchiveEntriesContent(): Promise<ArchiveEntry[]> {
-  const entries = await withDatabaseFallback(() => db.archiveEntry.findMany());
+  const entries = await runWithDatabaseFallback(() => db.archiveEntry.findMany());
 
   if (!entries?.length) {
     return archiveEntries;
@@ -349,7 +333,7 @@ export async function listArchiveEntriesContent(): Promise<ArchiveEntry[]> {
 export async function getArchiveEntryContent(
   entryId: string,
 ): Promise<ArchiveEntry | undefined> {
-  const entry = await withDatabaseFallback(() =>
+  const entry = await runWithDatabaseFallback(() =>
     db.archiveEntry.findUnique({
       where: {
         id: entryId,
@@ -363,7 +347,7 @@ export async function getArchiveEntryContent(
 export async function getArchiveWorkspaceTaskContent(
   taskId: string,
 ): Promise<WorkspaceTask | undefined> {
-  const task = await withDatabaseFallback(() =>
+  const task = await runWithDatabaseFallback(() =>
     db.task.findFirst({
       where: {
         id: taskId,
